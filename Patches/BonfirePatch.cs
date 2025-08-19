@@ -9,6 +9,7 @@ public static class BonfireSystem_ServerPatch
     static bool wasNight;
     public static void Prefix(BonfireSystem_Server __instance)
     {
+        if (!Core.HasInitialized) return;
         if (!Core.PlayerSettings.IsSolarEnabled(0)) return;
         if (Core.ServerGameManager.DayNightCycle.TimeOfDay == TimeOfDay.Night)
         {
@@ -37,6 +38,7 @@ public static class BonfireSystem_ServerPatch
 
     public static void Postfix(BonfireSystem_Server __instance)
     {
+        if (!Core.HasInitialized) return;
         if (!Core.PlayerSettings.IsSolarEnabled(0)) return;
         if (Core.ServerGameManager.DayNightCycle.TimeOfDay == TimeOfDay.Day) return;
 

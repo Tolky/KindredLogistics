@@ -49,6 +49,7 @@ internal static class Core
     public const int MAX_REPLY_LENGTH = 509;
 
     static bool hasInitialized;
+    internal static bool HasInitialized => hasInitialized;
 
     static MonoBehaviour monoBehaviour;
 
