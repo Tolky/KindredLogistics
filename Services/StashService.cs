@@ -15,7 +15,6 @@ namespace KindredLogistics.Services
     internal class StashService
     {
         const int ACTION_BAR_SLOTS = 8;
-        const string SKIP_SUFFIX = "''";
         const float FIND_SPOTLIGHT_DURATION = 15f;
 
         static readonly ComponentType[] StashQuery =
@@ -36,6 +35,9 @@ namespace KindredLogistics.Services
         readonly Regex senderRegex;
 
         readonly Dictionary<Entity, (double expirationTime, List<Entity> targetStashes)> activeSpotlights = [];
+        
+        const float STASH_COOLDOWN = 1f;
+        readonly Dictionary<Entity, double> lastStashed = [];
 
         public StashService()
         {
@@ -52,32 +54,18 @@ namespace KindredLogistics.Services
         public IEnumerable<Entity> GetAllAlliedStashesOnTerritory(Entity character)
         {
             var territoryIndex = Core.TerritoryService.GetTerritoryId(character);
-            var serverGameManager = Core.ServerGameManager;
-            NativeArray<Entity> stashArray = stashQuery.ToEntityArray(Allocator.Temp);
-            try
-            {
-                foreach (var stash in stashArray)
-                {
-                    try
-                    {
-                        if (Core.TerritoryService.GetTerritoryId(stash) != territoryIndex) continue;
-                        if (!serverGameManager.IsAllies(stash, character)) continue;
+            if (territoryIndex == -1) yield break;
 
-                        var name = stash.Read<NameableInteractable>().Name.ToString();
-                        if (name.EndsWith(SKIP_SUFFIX)) continue;
-                    }
-                    catch (Exception e)
-                    {
-                        Core.LogException(e, "Yielding Stashes");
-                        continue;
-                    }
+            var castleHeart = Core.TerritoryService.GetCastleHeart(territoryIndex);
+            if (castleHeart == Entity.Null) yield break;
 
-                    yield return stash;
-                }
-            }
-            finally
+            var sharedInventoryManager = castleHeart.Read<SharedCastleInventoryConnection>().SharedInventoryManager.GetEntityOnServer();
+            if (sharedInventoryManager == Entity.Null) yield break;
+
+            var sharedCastleInventory = Core.EntityManager.GetBuffer<SharedCastleInventories>(sharedInventoryManager);
+            foreach(var sharedInventory in sharedCastleInventory)
             {
-                stashArray.Dispose();
+                yield return sharedInventory.InventorySource;
             }
         }
 
@@ -125,22 +113,23 @@ namespace KindredLogistics.Services
         
         IEnumerable<Entity> GetNamedStashes(int territoryId, string nameContains)
         {
-            nameContains = nameContains.ToLower();
-            var stashArray = stashQuery.ToEntityArray(Allocator.Temp);
-            try
-            {
-                foreach (var stash in stashArray)
-                {
-                    if (Core.TerritoryService.GetTerritoryId(stash) != territoryId) continue;
-                    var name = stash.Read<NameableInteractable>().Name.ToString().ToLower();
-                    if (!name.Contains(nameContains)) continue;
 
-                    yield return stash;
-                }
-            }
-            finally
+            var castleHeart = Core.TerritoryService.GetCastleHeart(territoryId);
+            if (castleHeart == Entity.Null) yield break;
+
+            var sharedInventoryManager = castleHeart.Read<SharedCastleInventoryConnection>().SharedInventoryManager.GetEntityOnServer();
+            if (sharedInventoryManager == Entity.Null) yield break;
+
+            nameContains = nameContains.ToLower();
+            var sharedCastleInventory = Core.EntityManager.GetBuffer<SharedCastleInventories>(sharedInventoryManager);
+            foreach (var sharedInventory in sharedCastleInventory)
             {
-                stashArray.Dispose();
+                var stash = sharedInventory.InventorySource;
+
+                var name = stash.Read<NameableInteractable>().Name.ToString().ToLower();
+                if (!name.Contains(nameContains)) continue;
+
+                yield return stash;
             }
         }
 
@@ -167,6 +156,13 @@ namespace KindredLogistics.Services
                 var userEntity = charEntity.Read<PlayerCharacter>().UserEntity;
                 var user = userEntity.Read<User>();
 
+
+                if (lastStashed.TryGetValue(charEntity, out var lastStashTime) && Core.ServerTime - lastStashTime < STASH_COOLDOWN)
+                {
+                    Utilities.SendSystemMessageToClient(Core.EntityManager, user, "You must wait before stashing again!");
+                    return;
+                }
+
                 var downed = new PrefabGUID(-1992158531);
                 if (BuffUtility.TryGetBuff(Core.EntityManager, charEntity, downed, out var buff))
                 {
@@ -175,7 +171,7 @@ namespace KindredLogistics.Services
                 }
 
                 var health = charEntity.Read<Health>();
-                if (health.Value <= 0 || health.IsDead)
+                if (health.IsDead)
                 {
                     Utilities.SendSystemMessageToClient(Core.EntityManager, user, "Unable to stash when dead!");
                     return;
@@ -189,15 +185,26 @@ namespace KindredLogistics.Services
                 }
 
                 var castleHeartEntity = Core.TerritoryService.GetCastleHeart(territoryIndex);
-                if (castleHeartEntity != Entity.Null)
+                if (castleHeartEntity == Entity.Null)
                 {
-                    var castleHeart = castleHeartEntity.Read<CastleHeart>();
-                    if (castleHeart.ActiveEvent >= CastleHeartEvent.Attacked)
-                    {
-                        Utilities.SendSystemMessageToClient(Core.EntityManager, user, $"Unable to stash while castle is {castleHeart.ActiveEvent.ToString()}");
-                        return;
-                    }
+                    Utilities.SendSystemMessageToClient(Core.EntityManager, user, "There is no heart on this territory!");
+                    return;
                 }
+
+                if (!Core.ServerGameManager.IsAllies(castleHeartEntity, charEntity))
+                {
+                    Utilities.SendSystemMessageToClient(Core.EntityManager, user, "You aren't allies with the heart on this territory!");
+                    return;
+                }
+
+                var castleHeart = castleHeartEntity.Read<CastleHeart>();
+                if (castleHeart.ActiveEvent >= CastleHeartEvent.Attacked)
+                {
+                    Utilities.SendSystemMessageToClient(Core.EntityManager, user, $"Unable to stash while castle is {castleHeart.ActiveEvent.ToString()}");
+                    return;
+                }
+
+                lastStashed[charEntity] = Core.ServerTime;
 
                 var serverGameManager = Core.ServerGameManager;
                 var matches = new Dictionary<PrefabGUID, List<(Entity stash, Entity inventory)>>(capacity: 100);
@@ -211,9 +218,6 @@ namespace KindredLogistics.Services
                         {
                             continue;
                         }
-                        if (stash.Has<UnitSpawnerstation>()) continue;
-                        if (stash.Has<Refinementstation>()) continue;
-                        if (stash.Has<Bonfire>()) continue;
                         if (!serverGameManager.TryGetBuffer<AttachedBuffer>(stash, out var buffer))
                             continue;
 

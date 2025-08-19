@@ -1,4 +1,3 @@
-using BepInEx.Core.Logging.Interpolation;
 using ProjectM;
 using ProjectM.CastleBuilding;
 using ProjectM.Network;
@@ -46,6 +45,26 @@ namespace KindredLogistics.Services
             if (BuffUtility.TryGetBuff(Core.EntityManager, character, batform , out var _))
             {
                 Utilities.SendSystemMessageToClient(entityManager, user, "Cannot pull items while in batform.");
+                return;
+            }
+
+            var castleHeartEntity = Core.TerritoryService.GetCastleHeart(territoryIndex);
+            if (castleHeartEntity == Entity.Null)
+            {
+                Utilities.SendSystemMessageToClient(Core.EntityManager, user, "There is no heart on this territory!");
+                return;
+            }
+
+            if (!Core.ServerGameManager.IsAllies(castleHeartEntity, character))
+            {
+                Utilities.SendSystemMessageToClient(Core.EntityManager, user, "You aren't allies with the heart on this territory!");
+                return;
+            }
+
+            var castleHeart = castleHeartEntity.Read<CastleHeart>();
+            if (castleHeart.ActiveEvent >= CastleHeartEvent.Attacked)
+            {
+                Utilities.SendSystemMessageToClient(Core.EntityManager, user, $"Unable to pull while castle is {castleHeart.ActiveEvent.ToString()}");
                 return;
             }
 
@@ -240,6 +259,26 @@ namespace KindredLogistics.Services
             if (territoryIndex == -1)
             {
                 Utilities.SendSystemMessageToClient(Core.EntityManager, user, "Unable to pull outside territories!");
+                return;
+            }
+
+            var castleHeartEntity = Core.TerritoryService.GetCastleHeart(territoryIndex);
+            if (castleHeartEntity == Entity.Null)
+            {
+                Utilities.SendSystemMessageToClient(Core.EntityManager, user, "There is no heart on this territory!");
+                return;
+            }
+
+            if (!Core.ServerGameManager.IsAllies(castleHeartEntity, character))
+            {
+                Utilities.SendSystemMessageToClient(Core.EntityManager, user, "You aren't allies with the heart on this territory!");
+                return;
+            }
+
+            var castleHeart = castleHeartEntity.Read<CastleHeart>();
+            if (castleHeart.ActiveEvent >= CastleHeartEvent.Attacked)
+            {
+                Utilities.SendSystemMessageToClient(Core.EntityManager, user, $"Unable to pull while castle is {castleHeart.ActiveEvent.ToString()}");
                 return;
             }
 

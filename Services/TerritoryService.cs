@@ -7,6 +7,7 @@ using System.Collections;
 using System.Collections.Generic;
 using Unity.Collections;
 using Unity.Entities;
+using UnityEngine;
 
 namespace KindredLogistics.Services
 {
@@ -21,6 +22,7 @@ namespace KindredLogistics.Services
         public const int MAX_TERRITORY_ID = 146;
 
         EntityQuery castleHeartQuery;
+        int frameHeartsLastCached = -1;
         readonly Dictionary<int, Entity> territoryToCastleHeart = [];
 
         public TerritoryService()
@@ -63,34 +65,14 @@ namespace KindredLogistics.Services
             yield return null;
             while (true)
             {
-                var castleHeartEntities = castleHeartQuery.ToEntityArray(Allocator.Temp);
-                try
-                {
-                    foreach (var castleHeartEntity in castleHeartEntities)
-                    {
-                        var castleHeart = castleHeartEntity.Read<CastleHeart>();
-                        var territoryEntity = castleHeart.CastleTerritoryEntity;
-                        var territory = territoryEntity.Read<CastleTerritory>();
-                        territoryToCastleHeart[territory.CastleTerritoryIndex] = castleHeartEntity;
-                    }
-                }
-                finally
-                {
-                    castleHeartEntities.Dispose();
-                }
 
                 for (int i = MIN_TERRITORY_ID; i <= MAX_TERRITORY_ID; i++)
                 {
                     yield return null;
 
-                    if (!territoryToCastleHeart.TryGetValue(i, out var castleHeartEntity)) continue;
-
-                    // This was cached a while ago so it could be invalid now
-                    if (!Core.EntityManager.Exists(castleHeartEntity))
-                    {
-                        territoryToCastleHeart.Remove(i);
+                    var castleHeartEntity = GetCastleHeart(i);
+                    if (castleHeartEntity == Entity.Null)
                         continue;
-                    }
 
                     foreach (var callback in territoryUpdateCallbacks)
                     {
@@ -107,13 +89,52 @@ namespace KindredLogistics.Services
             }
         }
 
+        void CacheCastleHearts()
+        {
+            if (Time.frameCount == frameHeartsLastCached) return;
+            
+            frameHeartsLastCached = Time.frameCount;
+
+            var castleHeartEntities = castleHeartQuery.ToEntityArray(Allocator.Temp);
+            try
+            {
+                territoryToCastleHeart.Clear();
+                foreach (var castleHeartEntity in castleHeartEntities)
+                {
+                    var castleHeart = castleHeartEntity.Read<CastleHeart>();
+                    var territoryEntity = castleHeart.CastleTerritoryEntity;
+                    var territory = territoryEntity.Read<CastleTerritory>();
+                    territoryToCastleHeart[territory.CastleTerritoryIndex] = castleHeartEntity;
+                }
+            }
+            finally
+            {
+                castleHeartEntities.Dispose();
+            }
+        }
+
         public Entity GetCastleHeart(int territoryId)
         {
             if (!territoryToCastleHeart.TryGetValue(territoryId, out var castleHeartEntity))
-                return Entity.Null;
+            {
+                CacheCastleHearts();
+                if (!territoryToCastleHeart.TryGetValue(territoryId, out castleHeartEntity)) return Entity.Null;
+            }
 
             if (!Core.EntityManager.Exists(castleHeartEntity))
+            {
+                territoryToCastleHeart.Remove(territoryId);
                 return Entity.Null;
+            }
+
+            var castleHeart = castleHeartEntity.Read<CastleHeart>();
+            var territoryEntity = castleHeart.CastleTerritoryEntity;
+            var territory = territoryEntity.Read<CastleTerritory>();
+            if (territory.CastleTerritoryIndex != territoryId)
+            {
+                territoryToCastleHeart.Remove(territoryId);
+                return Entity.Null;
+            }
 
             return castleHeartEntity;
         }
