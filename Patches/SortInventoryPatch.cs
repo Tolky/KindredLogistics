@@ -7,7 +7,7 @@ using System.Collections.Generic;
 using Unity.Collections;
 using Unity.Entities;
 
-namespace KindreddLogistics.Patches
+namespace KindredLogistics.Patches
 {
     [HarmonyPatch]
     public class SortSingleInventorySystemPatch
@@ -22,6 +22,15 @@ namespace KindreddLogistics.Patches
             var entities = __instance._EventQuery.ToEntityArray(Allocator.Temp);
             try
             {
+                // Do a first pass of removing old entries from the lastSort list
+                var serverTime = Core.ServerTime;
+                for (int i = lastSort.Count - 1; i >= 0; i--)
+                {
+                    var lastSortTime = lastSort[i].Item2;
+                    if ((serverTime - lastSortTime) >= 1)
+                        lastSort.RemoveAt(i);
+                }
+
                 foreach (Entity entity in entities)
                 {
                     if (entity.Equals(Entity.Null)) continue;
@@ -30,23 +39,15 @@ namespace KindreddLogistics.Patches
                     var steamId = fromCharacter.User.Read<User>().PlatformId;
 
                     if (!Core.PlayerSettings.IsSortStashEnabled(steamId)) continue;
-
-                    var serverTime = Core.ServerTime;
+                    
                     var found = false;
                     for(int i = 0; i < lastSort.Count; i++)
                     {
-                        if (lastSort[i].Item1 == steamId)
-                        {
-                            var lastSortTime = lastSort[i].Item2;
-                            if ((serverTime - lastSortTime) < 1)
-                            {
-                                found = true;
-                                Core.Stash.StashCharacterInventory(fromCharacter.Character);
-                            }
-
-                            lastSort.RemoveAt(i);
-                            break;
-                        }
+                        if (lastSort[i].Item1 != steamId) continue;
+                        
+                        Core.Stash.StashCharacterInventory(fromCharacter.Character);
+                        lastSort.RemoveAt(i);
+                        break;
                     }
 
                     if(!found)
