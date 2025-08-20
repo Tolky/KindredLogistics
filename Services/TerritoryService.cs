@@ -21,8 +21,6 @@ namespace KindredLogistics.Services
         public const int MIN_TERRITORY_ID = 0;
         public const int MAX_TERRITORY_ID = 146;
 
-        EntityQuery castleHeartQuery;
-        int frameHeartsLastCached = -1;
         readonly Dictionary<int, Entity> territoryToCastleHeart = [];
 
         public TerritoryService()
@@ -49,8 +47,26 @@ namespace KindredLogistics.Services
             entityQueryBuilder = new EntityQueryBuilder(Allocator.Temp)
                 .AddAll(new(Il2CppType.Of<CastleHeart>(), ComponentType.AccessMode.ReadOnly));
 
-            castleHeartQuery = Core.EntityManager.CreateEntityQuery(ref entityQueryBuilder);
+            var castleHeartQuery = Core.EntityManager.CreateEntityQuery(ref entityQueryBuilder);
             entityQueryBuilder.Dispose();
+
+            var castleHeartEntities = castleHeartQuery.ToEntityArray(Allocator.Temp);
+            try
+            {
+                territoryToCastleHeart.Clear();
+                foreach (var castleHeartEntity in castleHeartEntities)
+                {
+                    var castleHeart = castleHeartEntity.Read<CastleHeart>();
+                    var territoryEntity = castleHeart.CastleTerritoryEntity;
+                    var territory = territoryEntity.Read<CastleTerritory>();
+                    territoryToCastleHeart[territory.CastleTerritoryIndex] = castleHeartEntity;
+                }
+            }
+            finally
+            {
+                castleHeartEntities.Dispose();
+            }
+            castleHeartQuery.Dispose();
 
             Core.StartCoroutine(UpdateLoop());
         }
@@ -89,37 +105,10 @@ namespace KindredLogistics.Services
             }
         }
 
-        void CacheCastleHearts()
-        {
-            if (Time.frameCount == frameHeartsLastCached) return;
-            
-            frameHeartsLastCached = Time.frameCount;
-
-            var castleHeartEntities = castleHeartQuery.ToEntityArray(Allocator.Temp);
-            try
-            {
-                territoryToCastleHeart.Clear();
-                foreach (var castleHeartEntity in castleHeartEntities)
-                {
-                    var castleHeart = castleHeartEntity.Read<CastleHeart>();
-                    var territoryEntity = castleHeart.CastleTerritoryEntity;
-                    var territory = territoryEntity.Read<CastleTerritory>();
-                    territoryToCastleHeart[territory.CastleTerritoryIndex] = castleHeartEntity;
-                }
-            }
-            finally
-            {
-                castleHeartEntities.Dispose();
-            }
-        }
-
         public Entity GetCastleHeart(int territoryId)
         {
             if (!territoryToCastleHeart.TryGetValue(territoryId, out var castleHeartEntity))
-            {
-                CacheCastleHearts();
-                if (!territoryToCastleHeart.TryGetValue(territoryId, out castleHeartEntity)) return Entity.Null;
-            }
+                return Entity.Null;
 
             if (!Core.EntityManager.Exists(castleHeartEntity))
             {
@@ -133,10 +122,31 @@ namespace KindredLogistics.Services
             if (territory.CastleTerritoryIndex != territoryId)
             {
                 territoryToCastleHeart.Remove(territoryId);
+                AddCastleHeart(castleHeartEntity);
                 return Entity.Null;
             }
 
             return castleHeartEntity;
+        }
+
+        internal void AddCastleHeart(Entity castleHeartEntity)
+        {
+            if (!Core.EntityManager.Exists(castleHeartEntity)) return;
+            var castleHeart = castleHeartEntity.Read<CastleHeart>();
+            var territoryEntity = castleHeart.CastleTerritoryEntity;
+            if (!Core.EntityManager.Exists(territoryEntity)) return;
+            var territory = territoryEntity.Read<CastleTerritory>();
+            territoryToCastleHeart[territory.CastleTerritoryIndex] = castleHeartEntity;
+        }
+
+        internal void RemoveCastleHeart(Entity castleHeartEntity)
+        {
+            if (!Core.EntityManager.Exists(castleHeartEntity)) return;
+            var castleHeart = castleHeartEntity.Read<CastleHeart>();
+            var territoryEntity = castleHeart.CastleTerritoryEntity;
+            if (!Core.EntityManager.Exists(territoryEntity)) return;
+            var territory = territoryEntity.Read<CastleTerritory>();
+            territoryToCastleHeart.Remove(territory.CastleTerritoryIndex);
         }
 
         public void FlushTerritoryCache()
