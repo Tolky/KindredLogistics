@@ -1,5 +1,6 @@
 ﻿using Il2CppInterop.Runtime;
 using ProjectM;
+using ProjectM.CastleBuilding;
 using ProjectM.Network;
 using System.Collections.Generic;
 using Unity.Collections;
@@ -10,15 +11,28 @@ using UnityEngine;
 namespace KindredLogistics.Services;
 class BrazierService
 {
-    EntityQuery brazierQuery;
+    readonly Dictionary<Entity, List<Entity>> braziersByHeart = [];
     Dictionary<int, HashSet<Entity>> modifiedBraziers = [];
 
     public BrazierService()
     {
         var entityQueryBuilder = new EntityQueryBuilder(Allocator.Temp)
-            .AddAll(ComponentType.ReadOnly(Il2CppType.Of<Bonfire>()));
-        brazierQuery = Core.EntityManager.CreateEntityQuery(ref entityQueryBuilder);
+            .AddAll(ComponentType.ReadOnly(Il2CppType.Of<Bonfire>()))
+            .WithOptions(EntityQueryOptions.IncludeDisabled);
+        var brazierQuery = Core.EntityManager.CreateEntityQuery(ref entityQueryBuilder);
         entityQueryBuilder.Dispose();
+
+        var stationArray = brazierQuery.ToEntityArray(Allocator.Temp);
+        try
+        {
+            foreach (var station in stationArray)
+                AddBrazier(station);
+        }
+        finally
+        {
+            stationArray.Dispose();
+        }
+        brazierQuery.Dispose();
 
         Core.TerritoryService.RegisterTerritoryUpdateCallback(UpdateIfBraziersActiveOnTerritory);
 
@@ -28,21 +42,34 @@ class BrazierService
         }
     }
 
+    internal void AddBrazier(Entity stationEntity)
+    {
+        var castleHeartEntity = stationEntity.Read<CastleHeartConnection>().CastleHeartEntity.GetEntityOnServer();
+
+        if (!braziersByHeart.TryGetValue(castleHeartEntity, out var list))
+        {
+            list = [];
+            braziersByHeart.Add(castleHeartEntity, list);
+        }
+        list.Add(stationEntity);
+    }
+
+    internal void RemoveBrazier(Entity stationEntity)
+    {
+        var castleHeartEntity = stationEntity.Read<CastleHeartConnection>().CastleHeartEntity.GetEntityOnServer();
+
+        if (!braziersByHeart.TryGetValue(castleHeartEntity, out var list)) return;
+
+        list.Remove(stationEntity);
+    }
+
     public IEnumerable<Entity> GetAllBraziers(int territoryId)
     {
-        var brazierArray = brazierQuery.ToEntityArray(Allocator.Temp);
-        try
-        {
-            foreach (var brazier in brazierArray)
-            {
-                if (Core.TerritoryService.GetTerritoryId(brazier) != territoryId) continue;
-                yield return brazier;
-            }
-        }
-        finally
-        {
-            brazierArray.Dispose();
-        }
+        var castleHeartEntity = Core.TerritoryService.GetCastleHeart(territoryId);
+        if (!braziersByHeart.TryGetValue(castleHeartEntity, out var list)) yield break;
+
+        foreach (var stationEntity in list)
+            yield return stationEntity;
     }
 
     void UpdateIfBraziersActiveOnTerritory(int territoryId, Entity castleHeartEntity)

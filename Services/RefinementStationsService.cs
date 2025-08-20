@@ -10,42 +10,61 @@ namespace KindredLogistics.Services
 {
     internal class RefinementStationsService
     {
-        static readonly ComponentType[] RefinementStationQuery =
-            [
-                ComponentType.ReadOnly(Il2CppType.Of<Team>()),
-                ComponentType.ReadOnly(Il2CppType.Of<CastleHeartConnection>()),
-                ComponentType.ReadOnly(Il2CppType.Of<Refinementstation>()),
-                ComponentType.ReadOnly(Il2CppType.Of<NameableInteractable>()),
-                ComponentType.ReadOnly(Il2CppType.Of<UserOwner>()),
-                ComponentType.ReadOnly(Il2CppType.Of<RefinementstationRecipesBuffer>()),
-                ComponentType.ReadOnly(Il2CppType.Of<CastleWorkstation>()),
-            ];
 
-        EntityQuery stationsQuery;
         readonly Regex receiverRegex;
         readonly Regex senderRegex;
 
+        readonly Dictionary<Entity, List<Entity>> refinementStationsByHeart = [];
+
         public RefinementStationsService() 
         {
-            stationsQuery = Core.EntityManager.CreateEntityQuery(RefinementStationQuery);
-            receiverRegex = new Regex(Const.RECEIVER_REGEX, RegexOptions.Compiled);
-            senderRegex = new Regex(Const.SENDER_REGEX, RegexOptions.Compiled);
-        }
+            var entityQueryBuilder = new EntityQueryBuilder(Allocator.Temp)
+            .AddAll(ComponentType.ReadOnly(Il2CppType.Of<Team>()))
+            .AddAll(ComponentType.ReadOnly(Il2CppType.Of<CastleHeartConnection>()))
+            .AddAll(ComponentType.ReadOnly(Il2CppType.Of<Refinementstation>()))
+            .AddAll(ComponentType.ReadOnly(Il2CppType.Of<NameableInteractable>()))
+            .AddAll(ComponentType.ReadOnly(Il2CppType.Of<UserOwner>()))
+            .AddAll(ComponentType.ReadOnly(Il2CppType.Of<RefinementstationRecipesBuffer>()))
+            .AddAll(ComponentType.ReadOnly(Il2CppType.Of<CastleWorkstation>()))
+            .WithOptions(EntityQueryOptions.IncludeDisabled);
 
-        public IEnumerable<Entity> GetAllStations()
-        {
+            var stationsQuery = Core.EntityManager.CreateEntityQuery(ref entityQueryBuilder);
+            entityQueryBuilder.Dispose();
             var stationArray = stationsQuery.ToEntityArray(Allocator.Temp);
             try
             {
                 foreach (var station in stationArray)
-                {
-                    yield return station;
-                }
+                    AddRefinementStation(station);
             }
             finally
             {
                 stationArray.Dispose();
             }
+            stationsQuery.Dispose();
+
+            receiverRegex = new Regex(Const.RECEIVER_REGEX, RegexOptions.Compiled);
+            senderRegex = new Regex(Const.SENDER_REGEX, RegexOptions.Compiled);
+        }
+
+        internal void AddRefinementStation(Entity stationEntity)
+        {
+            var castleHeartEntity = stationEntity.Read<CastleHeartConnection>().CastleHeartEntity.GetEntityOnServer();
+
+            if (!refinementStationsByHeart.TryGetValue(castleHeartEntity, out var list))
+            {
+                list = [];
+                refinementStationsByHeart.Add(castleHeartEntity, list);
+            }
+            list.Add(stationEntity);
+        }
+
+        internal void RemoveRefinementStation(Entity stationEntity)
+        {
+            var castleHeartEntity = stationEntity.Read<CastleHeartConnection>().CastleHeartEntity.GetEntityOnServer();
+
+            if (!refinementStationsByHeart.TryGetValue(castleHeartEntity, out var list)) return;
+
+            list.Remove(stationEntity);
         }
 
         public IEnumerable<(int group, Entity station)> GetAllReceivingStations(int territoryId)
@@ -66,26 +85,18 @@ namespace KindredLogistics.Services
 
         IEnumerable<(int group, Entity station)> GetAllGroupStations(Regex groupRegex, int territoryId)
         {
-            var stationArray = stationsQuery.ToEntityArray(Allocator.Temp);
-            try
-            {
-                foreach (var station in stationArray)
-                {
-                    var stationTerritoryId = Core.TerritoryService.GetTerritoryId(station);
-                    if (stationTerritoryId != territoryId)
-                        continue;
 
-                    var name = station.Read<NameableInteractable>().Name.ToString().ToLower();
-                    foreach (Match match in groupRegex.Matches(name))
-                    {
-                        var group = int.Parse(match.Groups[1].Value);
-                        yield return (group, station);
-                    }
-                }
-            }
-            finally
+            var castleHeartEntity = Core.TerritoryService.GetCastleHeart(territoryId);
+            if (!refinementStationsByHeart.TryGetValue(castleHeartEntity, out var list)) yield break;
+
+            foreach (var station in list)
             {
-                stationArray.Dispose();
+                var name = station.Read<NameableInteractable>().Name.ToString().ToLower();
+                foreach (Match match in groupRegex.Matches(name))
+                {
+                    var group = int.Parse(match.Groups[1].Value);
+                    yield return (group, station);
+                }
             }
         }
 
