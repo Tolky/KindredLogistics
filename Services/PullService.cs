@@ -1,4 +1,5 @@
 using ProjectM;
+using ProjectM.Behaviours;
 using ProjectM.CastleBuilding;
 using ProjectM.Network;
 using ProjectM.Scripting;
@@ -24,6 +25,20 @@ namespace KindredLogistics.Services
             if(!Core.GameDataSystem.ItemHashLookupMap.TryGetValue(item, out var itemData))
             {
                 Utilities.SendSystemMessageToClient(Core.EntityManager, user, "Invalid item specified.");
+                return;
+            }
+
+            var downed = new PrefabGUID(-1992158531);
+            if (BuffUtility.TryGetBuff(Core.EntityManager, character, downed, out var buff))
+            {
+                Utilities.SendSystemMessageToClient(Core.EntityManager, user, "Unable to pull while downed!");
+                return;
+            }
+
+            var health = character.Read<Health>();
+            if (health.IsDead)
+            {
+                Utilities.SendSystemMessageToClient(Core.EntityManager, user, "Unable to pull when dead!");
                 return;
             }
 
@@ -251,6 +266,20 @@ namespace KindredLogistics.Services
             if (Core.PlayerSettings.IsPullEnabled())
             {
                 Utilities.SendSystemMessageToClient(Core.EntityManager, user, "Pulling is globally disabled.");
+                return;
+            }
+
+            var downed = new PrefabGUID(-1992158531);
+            if (BuffUtility.TryGetBuff(Core.EntityManager, character, downed, out var buff))
+            {
+                Utilities.SendSystemMessageToClient(Core.EntityManager, user, "Unable to pull while downed!");
+                return;
+            }
+
+            var health = character.Read<Health>();
+            if (health.IsDead)
+            {
+                Utilities.SendSystemMessageToClient(Core.EntityManager, user, "Unable to pull when dead!");
                 return;
             }
 

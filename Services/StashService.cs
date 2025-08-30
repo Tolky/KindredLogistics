@@ -3,6 +3,7 @@ using ProjectM;
 using ProjectM.CastleBuilding;
 using ProjectM.Network;
 using Stunlock.Core;
+using Stunlock.Network;
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -15,6 +16,7 @@ namespace KindredLogistics.Services
     internal class StashService
     {
         const int ACTION_BAR_SLOTS = 8;
+        const string SKIP_SUFFIX = "''";
         const float FIND_SPOTLIGHT_DURATION = 15f;
 
         static readonly ComponentType[] StashQuery =
@@ -65,6 +67,9 @@ namespace KindredLogistics.Services
             var sharedCastleInventory = Core.EntityManager.GetBuffer<SharedCastleInventories>(sharedInventoryManager);
             foreach(var sharedInventory in sharedCastleInventory)
             {
+                var name = sharedInventory.InventorySource.Read<NameableInteractable>().Name.ToString();
+                if (name.EndsWith(SKIP_SUFFIX)) continue;
+
                 yield return sharedInventory.InventorySource;
             }
         }

@@ -16,7 +16,7 @@ Note: Due to the *vanilla* bug of the advanced furnace having a hidden recipe fo
 - Tired of running around from station to station to make something? No worries! Use the conveyor system to link chests and refining inventories for chain crafting!
 - Repair your gear without fetching materials yourself!
 
-This was a collaborative effort from Odjit (Dj) and Zfolmt [(Mitch)](https://www.patreon.com/join/4865914). Feel free to reach out to either of us if you have questions or need help with the mod!
+This was a collaborative effort from Odjit (Dj) and Zfolmt [(Mitch)](https://www.patreon.com/join/4865914). Feel free to reach out to either of us on the community discord if you have questions or need help with the mod!
 Updated for 1.1 as of 1.5.0
 
 [V Rising Modding Discord](https://vrisingmods.com/discord) | [How to Install Mods on BepInEx](https://wiki.vrisingmods.com/user/Mod_Install.html) | [How to Use Mods In-Game](https://wiki.vrisingmods.com/user/Using_Server_Mods.html)
