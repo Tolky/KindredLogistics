@@ -213,11 +213,15 @@ namespace KindredLogistics.Services
             }
         }
 
+        readonly HashSet<(Entity entity, PrefabGUID item)> salvagerFullOfItem = [];
+
         void ProcessSalvagers(int territoryId, Entity castleHeartEntity)
         {
             if (!Core.PlayerSettings.IsSalvageEnabled(0)) return;
 
-            var salvagers = Core.SalvageService.GetAllSalvageStations(territoryId).ToArray();
+            var salvagers = Core.SalvageService.GetAllSalvageStations(territoryId)
+                            .Select((s, i) => (entity: s, station: s.Read<Salvagestation>(), index: i))
+                            .ToList();
 
             var userOwner = castleHeartEntity.Read<UserOwner>();
             if (userOwner.Owner.GetEntityOnServer() == Entity.Null) return;
@@ -225,6 +229,28 @@ namespace KindredLogistics.Services
             var platformID = userOwner.Owner.GetEntityOnServer().Read<User>().PlatformId;
             if (!Core.PlayerSettings.IsSalvageEnabled(platformID)) return;
 
+            // Empty all salvage outputs first
+            var itemStashes = Utilities.GetItemStashesOnTerritory(territoryId);
+            foreach (var salvager in salvagers)
+            {
+                var salvageStation = salvager.station;
+                var outputInventoryEntity = salvageStation.OutputInventoryEntity.GetEntityOnServer();
+
+                var inventoryBuffer = Core.EntityManager.GetBuffer<InventoryBuffer>(outputInventoryEntity).ToNativeArray(Allocator.Temp);
+                try
+                {
+                    if (InventoryUtilities.IsInventoryEmpty(inventoryBuffer)) continue;
+                }
+                finally
+                {
+                    inventoryBuffer.Dispose();
+                }
+
+                Utilities.StashInventoryEntity(outputInventoryEntity, itemStashes);
+            }
+
+            // Now fill all the salvagers
+            salvagerFullOfItem.Clear();
             foreach (var salvageSupplier in Core.Stash.GetAllSalvageStashes(territoryId))
             {
                 if (!Core.ServerGameManager.TryGetBuffer<AttachedBuffer>(salvageSupplier, out var buffer))
@@ -241,47 +267,53 @@ namespace KindredLogistics.Services
                         Core.PrefabCollectionSystem._PrefabGuidToEntityMap.TryGetValue(item.ItemType, out var prefabEntity);
                         if (!prefabEntity.Has<Salvageable>()) continue;
 
-                        var totalTransfered = 0;
-                        foreach (var salvager in salvagers)
+                        var amountToTransfer = item.Amount;
+                        for (var i = salvagers.Count - 1; i >= 0; i--)
                         {
-                            var salvageStation = salvager.Read<Salvagestation>();
+                            var salvager = salvagers[i];
+                            var salvagerKey = (salvager.entity, item.ItemType);
+                            if (salvagerFullOfItem.Contains(salvagerKey)) continue;
+
+                            var salvageStation = salvager.station;
                             var inputInventoryEntity = salvageStation.InputInventoryEntity.GetEntityOnServer();
 
                             var startInputSlot = 0;
-                            Utilities.TransferItemEntities(salvageSupplierInventory, inputInventoryEntity, item.ItemType, item.Amount - totalTransfered, ref startInputSlot, out var amountTransferred);
+                            Utilities.TransferItemEntities(salvageSupplierInventory, inputInventoryEntity, item.ItemType, amountToTransfer, ref startInputSlot, out var amountTransferred);
 
-                            if (amountTransferred == 0) continue;
+                            var isFull = false;
+                            if (amountTransferred < amountToTransfer)
+                            {
+                                if (Core.ServerGameManager.HasFullInventory(inputInventoryEntity))
+                                {
+                                    salvagers.RemoveAt(i);
+                                    isFull = true;
+                                }
+                                else
+                                {
+                                    salvagerFullOfItem.Add(salvagerKey);
+                                }
+                            }
+
+                            if (amountTransferred == 0)
+                            {
+                                continue;
+                            }
+
+                            amountToTransfer -= amountTransferred;
 
                             if (!salvageStation.IsWorking)
                             {
                                 salvageStation.IsWorking = true;
-                                salvager.Write(salvageStation);
+                                salvager.entity.Write(salvageStation);
+
+                                if (!isFull)
+                                    salvagers[salvager.index] = (salvager.entity, salvageStation, salvager.index);
                             }
 
-                            totalTransfered += amountTransferred;
-                            if (totalTransfered >= item.Amount) break;
+                            if (amountToTransfer <= 0) break;
                         }
                     }
                 }
-            }
-
-            foreach (var salvager in salvagers)
-            {
-
-                var salvageStation = salvager.Read<Salvagestation>();
-                var outputInventoryEntity = salvageStation.OutputInventoryEntity.GetEntityOnServer();
-
-                var inventoryBuffer = Core.EntityManager.GetBuffer<InventoryBuffer>(outputInventoryEntity).ToNativeArray(Allocator.Temp);
-                try
-                {
-                    if (InventoryUtilities.IsInventoryEmpty(inventoryBuffer)) continue;
-                }
-                finally
-                {
-                    inventoryBuffer.Dispose();
-                }
-
-                Utilities.StashInventoryEntity(salvager, outputInventoryEntity, "excess");
             }
         }
 

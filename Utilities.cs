@@ -44,6 +44,73 @@ namespace KindredLogistics
             StashInventoryEntity(servant, inventory, "spoils");
         }
 
+        public static Dictionary<PrefabGUID, List<Entity>> GetItemStashesOnTerritory(int territoryId)
+        {
+            var serverGameManager = Core.ServerGameManager;
+            var matches = new Dictionary<PrefabGUID, List<Entity>>(capacity: 100);
+            var alreadyAdded = new HashSet<PrefabGUID>(capacity: 32);
+            foreach (Entity stash in Core.Stash.GetStashesOnTerritory(territoryId))
+            {
+                if (!serverGameManager.TryGetBuffer<AttachedBuffer>(stash, out var buffer))
+                    continue;
+
+                foreach (var attachedBuffer in buffer)
+                {
+                    alreadyAdded.Clear();
+                    Entity attachedEntity = attachedBuffer.Entity;
+                    if (!attachedEntity.Has<PrefabGUID>()) continue;
+                    if (!attachedEntity.Read<PrefabGUID>().Equals(StashService.ExternalInventoryPrefab)) continue;
+
+                    var checkInventoryBuffer = attachedEntity.ReadBuffer<InventoryBuffer>();
+                    foreach (var inventoryEntry in checkInventoryBuffer)
+                    {
+                        var item = inventoryEntry.ItemType;
+                        if (item.GuidHash == 0) continue;
+                        if (alreadyAdded.Contains(item)) continue;
+                        if (!matches.TryGetValue(item, out var itemMatches))
+                        {
+                            itemMatches = [];
+                            matches[item] = itemMatches;
+                        }
+                        itemMatches.Add(attachedEntity);
+                        alreadyAdded.Add(item);
+                    }
+                }
+            }
+
+            return matches;
+        }
+
+        public static void StashInventoryEntity(Entity inventory, Dictionary<PrefabGUID, List<Entity>> itemInventories)
+        {
+            var serverGameManager = Core.ServerGameManager;
+            if (!serverGameManager.TryGetBuffer<InventoryBuffer>(inventory, out var inventoryBuffer))
+                return;
+
+            for (var i = 0; i < inventoryBuffer.Length; i++)
+            {
+                var item = inventoryBuffer[i].ItemType;
+                var amountToTransfer = serverGameManager.GetInventoryItemCount(inventory, item);
+                if (itemInventories.TryGetValue(item, out var stashEntries)) // if no match straight to spoils
+                {
+                    for(var j = stashEntries.Count - 1; j >= 0; j--)
+                    {
+                        var stashEntry = stashEntries[j];
+                        var transferred = TransferItems(serverGameManager, inventory, stashEntry, item, amountToTransfer); // returns amount transferred
+                        amountToTransfer -= transferred;
+
+
+                        if (transferred != amountToTransfer)
+                        {
+                            // This inventory is now full
+                            stashEntries.RemoveAt(j);
+                        }
+                        else if (amountToTransfer <= 0) break;
+                    }
+                }
+            }
+        }
+
         public static void StashInventoryEntity(Entity entityWithTerritory, Entity inventory, string overflowStashName)
         {
             var serverGameManager = Core.ServerGameManager;
