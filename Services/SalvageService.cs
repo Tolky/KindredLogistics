@@ -58,6 +58,9 @@ class SalvageService
         if (!salvageStationsByHeart.TryGetValue(castleHeartEntity, out var list)) yield break;
 
         foreach (var stationEntity in list)
+        {
+            if (stationEntity.Has<Disabled>()) continue;
             yield return stationEntity;
+        }
     }
 }

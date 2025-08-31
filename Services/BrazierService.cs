@@ -69,7 +69,10 @@ class BrazierService
         if (!braziersByHeart.TryGetValue(castleHeartEntity, out var list)) yield break;
 
         foreach (var stationEntity in list)
+        {
+            if (stationEntity.Has<Disabled>()) continue;
             yield return stationEntity;
+        }
     }
 
     void UpdateIfBraziersActiveOnTerritory(int territoryId, Entity castleHeartEntity)

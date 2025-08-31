@@ -57,7 +57,11 @@ namespace KindredLogistics.Services
         {
             var territoryIndex = Core.TerritoryService.GetTerritoryId(character);
             if (territoryIndex == -1) yield break;
+            GetStashesOnTerritory(territoryIndex);
+        }
 
+        public IEnumerable<Entity> GetStashesOnTerritory(int territoryIndex)
+        {
             var castleHeart = Core.TerritoryService.GetCastleHeart(territoryIndex);
             if (castleHeart == Entity.Null) yield break;
 
@@ -65,7 +69,7 @@ namespace KindredLogistics.Services
             if (sharedInventoryManager == Entity.Null) yield break;
 
             var sharedCastleInventory = Core.EntityManager.GetBuffer<SharedCastleInventories>(sharedInventoryManager);
-            foreach(var sharedInventory in sharedCastleInventory)
+            foreach (var sharedInventory in sharedCastleInventory)
             {
                 var name = sharedInventory.InventorySource.Read<NameableInteractable>().Name.ToString();
                 if (name.EndsWith(SKIP_SUFFIX)) continue;
