@@ -240,13 +240,13 @@ namespace KindredLogistics.Services
                 try
                 {
                     if (InventoryUtilities.IsInventoryEmpty(inventoryBuffer)) continue;
+
+                    Utilities.StashInventoryEntity(outputInventoryEntity, itemStashes);
                 }
                 finally
                 {
                     inventoryBuffer.Dispose();
                 }
-
-                Utilities.StashInventoryEntity(outputInventoryEntity, itemStashes);
             }
 
             // Now fill all the salvagers

@@ -90,6 +90,7 @@ namespace KindredLogistics
             for (var i = 0; i < inventoryBuffer.Length; i++)
             {
                 var item = inventoryBuffer[i].ItemType;
+                if (item.IsEmpty()) continue;
                 var amountToTransfer = serverGameManager.GetInventoryItemCount(inventory, item);
                 if (itemInventories.TryGetValue(item, out var stashEntries)) // if no match straight to spoils
                 {
@@ -99,13 +100,12 @@ namespace KindredLogistics
                         var transferred = TransferItems(serverGameManager, inventory, stashEntry, item, amountToTransfer); // returns amount transferred
                         amountToTransfer -= transferred;
 
-
-                        if (transferred != amountToTransfer)
+                        if (amountToTransfer > 0)
                         {
                             // This inventory is now full
                             stashEntries.RemoveAt(j);
                         }
-                        else if (amountToTransfer <= 0) break;
+                        else break;
                     }
                 }
             }
