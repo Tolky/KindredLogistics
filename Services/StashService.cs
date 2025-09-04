@@ -57,7 +57,8 @@ namespace KindredLogistics.Services
         {
             var territoryIndex = Core.TerritoryService.GetTerritoryId(character);
             if (territoryIndex == -1) yield break;
-            GetStashesOnTerritory(territoryIndex);
+            foreach(var stash in GetStashesOnTerritory(territoryIndex))
+                yield return stash;
         }
 
         public IEnumerable<Entity> GetStashesOnTerritory(int territoryIndex)
