@@ -17,6 +17,7 @@ namespace KindredLogistics.Services
 
         readonly List<Entity> distributionList = [];
         readonly Dictionary<Entity, int> amountReceiving = [];
+        readonly Dictionary<PrefabGUID, int> amountToDistribute = [];
 
         public ConveyorService()
         {
@@ -38,7 +39,7 @@ namespace KindredLogistics.Services
 
             var serverGameManager = Core.ServerGameManager;
 
-            // Determine what is needed for each brazier
+            // Determine what is needed for each station
             var receivingNeeds = new Dictionary<(int group, PrefabGUID item), List<(Entity receiver, int amount)>>();
             foreach (var (group, station) in Core.RefinementStations.GetAllReceivingStations(territoryId))
             {
@@ -57,8 +58,8 @@ namespace KindredLogistics.Services
                     var requirements = recipeEntity.ReadBuffer<RecipeRequirementBuffer>();
                     foreach (var requirement in requirements)
                     {
-                        // Always desire 2x the amount so the moment it finishes it immediately starts again
-                        var amountWanted = 2 * Mathf.RoundToInt(requirement.Amount * matchFloorReduction);
+                        // Always desire 5x the transferring so the moment it finishes it immediately starts again
+                        var amountWanted = 5 * Mathf.RoundToInt(requirement.Amount * matchFloorReduction);
 
                         // Check how much is already in the inventory
                         int has = 0;
@@ -99,13 +100,14 @@ namespace KindredLogistics.Services
                     foreach (var item in inventoryBuffer)
                     {
                         if (item.ItemType.GuidHash == 0) continue;
+
                         if (!receivingNeeds.TryGetValue((group, item.ItemType), out var needs))
                         {
                             needs = [];
                             receivingNeeds[(group, item.ItemType)] = needs;
                         }
 
-                        needs.Add((attachedEntity, 1));
+                        needs.Add((attachedEntity, 500));
                     }
                 }
             }
@@ -140,73 +142,64 @@ namespace KindredLogistics.Services
         void DistributeInventory(Dictionary<(int group, PrefabGUID item), List<(Entity receiver, int amount)>> receivingNeeds,
                                  ServerGameManager serverGameManager, int group, Entity inventoryEntity, int retain = 0)
         {
+            amountToDistribute.Clear();
+
             var inventoryBuffer = inventoryEntity.ReadBuffer<InventoryBuffer>();
             foreach (var item in inventoryBuffer)
             {
                 if (item.ItemType.GuidHash == 0) continue;
+                if (!item.ItemEntity.Equals(NetworkedEntity.Empty)) continue;
+
+                if (!amountToDistribute.TryGetValue(item.ItemType, out var totalAmountDistribute))
+                    totalAmountDistribute = item.Amount - retain;
+                else
+                    totalAmountDistribute += item.Amount;
+                amountToDistribute[item.ItemType] = totalAmountDistribute;
+            }
+
+            foreach((var item, var totalAmount) in amountToDistribute)
+            {
                 // Does anyone need this item?
-                if (!receivingNeeds.TryGetValue((group, item.ItemType), out var needs)) continue;
-
-                // Distribute the item to all the stations in need weighted by the amount needed
-                var amount = item.Amount - retain;
-
-                if (amount <= 0) continue;
+                if (!receivingNeeds.TryGetValue((group, item), out var needs)) continue;
 
                 var totalWanted = needs.Sum(x => x.amount);
 
                 // If we have more than enough, distribute evenly
-                if (totalWanted < amount)
+                if (totalWanted <= totalAmount)
                 {
                     foreach (var (receivingInventoryEntity, wanted) in needs)
-                        Utilities.TransferItems(serverGameManager, inventoryEntity, receivingInventoryEntity, item.ItemType, wanted);
+                        Utilities.TransferItems(serverGameManager, inventoryEntity, receivingInventoryEntity, item, wanted);
                     needs.Clear();
                 }
                 else
                 {
-                    // Can only give out whole numbers so need to randomly portion it out based on a weight of the desired amount
-                    // Over time this should even out
-                    distributionList.Clear();
-                    foreach (var (receivingInventoryEntity, wanted) in needs)
+                    var remainder = 0;
+                    // Give out proportionally
+
+                    for (int i = needs.Count - 1; i >= 0; i--)
                     {
-                        for (int i = 0; i < wanted; i++)
+                        var (receivingInventoryEntity, wanted) = needs[i];
+                        var numerator = (long)wanted * totalAmount;
+                        var transferring = (int)(numerator / totalWanted);
+                        remainder += (int)(numerator % totalWanted);
+                        if (remainder >= totalWanted)
                         {
-                            distributionList.Add(receivingInventoryEntity);
+                            transferring++;
+                            remainder -= totalWanted;
                         }
-                    }
-
-                    amountReceiving.Clear();
-                    for (int i = 0; i < amount; i++)
-                    {
-                        var index = random.Next(distributionList.Count);
-
-                        // Determine who gets it
-                        var receivingInventoryEntity = distributionList[index];
-                        if (!amountReceiving.TryGetValue(receivingInventoryEntity, out var receivingAmount))
-                            amountReceiving[receivingInventoryEntity] = 1;
-                        else
-                            amountReceiving[receivingInventoryEntity] = receivingAmount + 1;
-                    }
-
-                    foreach (var (receivingInventoryEntity, receivingAmount) in amountReceiving)
-                    {
-                        Utilities.TransferItems(serverGameManager, inventoryEntity, receivingInventoryEntity, item.ItemType, receivingAmount);
-
-                        // Remove the amount from the needs list
-                        var amountToRemove = receivingAmount;
-                        for (int i = needs.Count - 1; i >= 0; i--)
+                        var transferred = Utilities.TransferItems(serverGameManager, inventoryEntity, receivingInventoryEntity, item, transferring);
+                        if (transferred < transferring)
                         {
-                            if (!needs[i].receiver.Equals(receivingInventoryEntity)) continue;
-
-                            if (needs[i].amount > amountToRemove)
-                            {
-                                needs[i] = (receivingInventoryEntity, needs[i].amount - amountToRemove);
-                                break;
-                            }
-                            else
-                            {
-                                amountToRemove -= needs[i].amount;
-                                needs.RemoveAt(i);
-                            }
+                            remainder += transferring - transferred;
+                            needs.RemoveAt(i);
+                        }
+                        else if (transferred >= wanted)
+                        {
+                            needs.RemoveAt(i);
+                        }
+                        else
+                        {
+                            needs[i] = (receivingInventoryEntity, wanted - transferred);
                         }
                     }
                 }
@@ -359,7 +352,7 @@ namespace KindredLogistics.Services
                     var requirements = recipeEntity.ReadBuffer<RecipeRequirementBuffer>();
                     foreach (var requirement in requirements)
                     {
-                        // Always desire 2x the amount so the moment it finishes it immediately starts again
+                        // Always desire 2x the transferring so the moment it finishes it immediately starts again
                         var amountWanted = 2 * Mathf.RoundToInt(requirement.Amount * matchFloorReduction);
 
                         // Check how much is already in the inventory
@@ -421,7 +414,7 @@ namespace KindredLogistics.Services
                 // Does anyone need this item?
                 if (!receivingNeeds.TryGetValue(item.ItemType, out var needs)) continue;
 
-                // Distribute the item to all the stations in need weighted by the amount needed
+                // Distribute the item to all the stations in need weighted by the transferring needed
                 var amount = item.Amount - retain;
 
                 if (amount <= 0) continue;
@@ -437,7 +430,7 @@ namespace KindredLogistics.Services
                 }
                 else
                 {
-                    // Can only give out whole numbers so need to randomly portion it out based on a weight of the desired amount
+                    // Can only give out whole numbers so need to randomly portion it out based on a weight of the desired transferring
                     // Over time this should even out
                     distributionList.Clear();
                     foreach (var (receivingInventoryEntity, wanted) in needs)
@@ -465,7 +458,7 @@ namespace KindredLogistics.Services
                     {
                         Utilities.TransferItems(serverGameManager, inventoryEntity, receivingInventoryEntity, item.ItemType, receivingAmount);
 
-                        // Remove the amount from the needs list
+                        // Remove the transferring from the needs list
                         var amountToRemove = receivingAmount;
                         needs[receivingInventoryEntity] -= amountToRemove;
                         if (needs[receivingInventoryEntity] <= 0)
