@@ -32,9 +32,10 @@ namespace KindredLogistics.Services
 
         public delegate bool StashFilter(Entity station);
 
-        EntityQuery stashQuery;
         readonly Regex receiverRegex;
         readonly Regex senderRegex;
+
+        public Regex ReceiverRegex => receiverRegex;
 
         readonly Dictionary<Entity, (double expirationTime, List<Entity> targetStashes)> activeSpotlights = [];
         
@@ -47,7 +48,6 @@ namespace KindredLogistics.Services
                 .WithOptions(EntityQueryOptions.IncludeDisabledEntities);
             foreach (var entry in StashQuery)
                 entityQueryBuilder.AddAll(entry);
-            stashQuery = Core.EntityManager.CreateEntityQuery(ref entityQueryBuilder);
             entityQueryBuilder.Dispose();
             receiverRegex = new Regex(Const.RECEIVER_REGEX, RegexOptions.Compiled);
             senderRegex = new Regex(Const.SENDER_REGEX, RegexOptions.Compiled);

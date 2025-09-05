@@ -187,35 +187,63 @@ namespace KindredLogistics.Services
 
             // Now fill all the salvagers
             salvagerFullOfItem.Clear();
+            var itemAmountsToTransfer = new Dictionary<PrefabGUID, (bool itemEntity, int amount)>();
             foreach (var salvageSupplier in Core.Stash.GetAllSalvageStashes(territoryId))
             {
                 if (!Core.ServerGameManager.TryGetBuffer<AttachedBuffer>(salvageSupplier, out var buffer))
                     continue;
+
+                var name = salvageSupplier.Read<NameableInteractable>().Name.ToString().ToLower();
+                var isReceiverStash = Core.Stash.ReceiverRegex.IsMatch(name);
                 foreach (var attachedBuffer in buffer)
                 {
                     var salvageSupplierInventory = attachedBuffer.Entity;
                     if (!salvageSupplierInventory.Has<PrefabGUID>()) continue;
                     if (!salvageSupplierInventory.Read<PrefabGUID>().Equals(StashService.ExternalInventoryPrefab)) continue;
 
+                    itemAmountsToTransfer.Clear();
                     var inventoryBuffer = salvageSupplierInventory.ReadBuffer<InventoryBuffer>();
                     foreach (var item in inventoryBuffer)
                     {
                         Core.PrefabCollectionSystem._PrefabGuidToEntityMap.TryGetValue(item.ItemType, out var prefabEntity);
                         if (!prefabEntity.Has<Salvageable>()) continue;
 
-                        var amountToTransfer = item.Amount;
+                        var amount = 0;
+                        if (itemAmountsToTransfer.TryGetValue(item.ItemType, out var entry))
+                        {
+                            amount = entry.amount;
+                        }
+                        amount += item.Amount;
+                        itemAmountsToTransfer[item.ItemType] = (!item.ItemEntity.Equals(NetworkedEntity.Empty), amount);
+                    }
+
+                    foreach(var (itemType, entry) in itemAmountsToTransfer)
+                    { 
+                        var amountToTransfer = entry.amount;
+                        if (isReceiverStash) amountToTransfer -= 1;
+                        if (amountToTransfer <= 0) continue;
                         for (var i = salvagers.Count - 1; i >= 0; i--)
                         {
+                            if (Core.TerritoryService.ShouldUpdateYield())
+                                yield return null;
+
+                            if (!Core.EntityManager.Exists(salvageSupplierInventory)) break;
+
                             var salvager = salvagers[i];
-                            var salvagerKey = (salvager.entity, item.ItemType);
+
+                            var salvagerKey = (salvager.entity, itemType);
                             if (salvagerFullOfItem.Contains(salvagerKey)) continue;
+                            if (!Core.EntityManager.Exists(salvager.entity)) continue;
 
                             var salvageStation = salvager.station;
                             var inputInventoryEntity = salvageStation.InputInventoryEntity.GetEntityOnServer();
 
                             var startInputSlot = 0;
-                            Utilities.TransferItemEntities(salvageSupplierInventory, inputInventoryEntity, item.ItemType, amountToTransfer, ref startInputSlot, out var amountTransferred);
-
+                            var amountTransferred = 0;
+                            if (entry.itemEntity)
+                                Utilities.TransferItemEntities(salvageSupplierInventory, inputInventoryEntity, itemType, amountToTransfer, ref startInputSlot, out amountTransferred);
+                            else
+                                amountTransferred = Utilities.TransferItems(Core.ServerGameManager, salvageSupplierInventory, inputInventoryEntity, itemType, amountToTransfer);
                             var isFull = false;
                             if (amountTransferred < amountToTransfer)
                             {
