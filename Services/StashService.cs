@@ -81,7 +81,7 @@ namespace KindredLogistics.Services
 
         public IEnumerable<(int group, Entity station)> GetAllReceivingStashes(int territoryId)
         {
-            foreach (var result in GetAllGroupStations(receiverRegex, territoryId))
+            foreach (var result in GetAllGroupStashes(receiverRegex, territoryId))
             {
                 yield return result;
             }
@@ -89,39 +89,13 @@ namespace KindredLogistics.Services
 
         public IEnumerable<(int group, Entity station)> GetAllSendingStashes(int territoryId)
         {
-            foreach (var result in GetAllGroupStations(senderRegex, territoryId))
+            foreach (var result in GetAllGroupStashes(senderRegex, territoryId))
             {
                 yield return result;
             }
         }
 
-        IEnumerable<(int group, Entity station)> GetAllGroupStations(Regex groupRegex, int territoryId)
-        {
-            var stashArray = stashQuery.ToEntityArray(Allocator.Temp);
-            try
-            {
-                foreach (var stash in stashArray)
-                {
-                    var stashTerritoryId = Core.TerritoryService.GetTerritoryId(stash);
-                    if (stashTerritoryId != territoryId)
-                        continue;
-
-                    var name = stash.Read<NameableInteractable>().Name.ToString().ToLower();
-                    foreach (Match match in groupRegex.Matches(name))
-                    {
-                        var group = int.Parse(match.Groups[1].Value);
-                        yield return (group, stash);
-                    }
-                }
-            }
-            finally
-            {
-                stashArray.Dispose();
-            }
-        }
-
-        
-        IEnumerable<Entity> GetNamedStashes(int territoryId, string nameContains)
+        IEnumerable<(int group, Entity station)> GetAllGroupStashes(Regex groupRegex, int territoryId)
         {
 
             var castleHeart = Core.TerritoryService.GetCastleHeart(territoryId);
@@ -130,11 +104,45 @@ namespace KindredLogistics.Services
             var sharedInventoryManager = castleHeart.Read<SharedCastleInventoryConnection>().SharedInventoryManager.GetEntityOnServer();
             if (sharedInventoryManager == Entity.Null) yield break;
 
+
+            var sharedCastleInventory = Core.EntityManager.GetBuffer<SharedCastleInventories>(sharedInventoryManager);
+            for(var i = 0; i < sharedCastleInventory.Length; i++)
+            {
+                var sharedInventory = sharedCastleInventory[i];
+                var stash = sharedInventory.InventorySource;
+
+                if (!Core.EntityManager.Exists(stash)) continue;
+
+                var stashTerritoryId = Core.TerritoryService.GetTerritoryId(stash);
+                if (stashTerritoryId != territoryId)
+                    continue;
+
+                var name = stash.Read<NameableInteractable>().Name.ToString().ToLower();
+                foreach (Match match in groupRegex.Matches(name))
+                {
+                    var group = int.Parse(match.Groups[1].Value);
+                    yield return (group, stash);
+                }
+            }
+        }
+
+        
+        IEnumerable<Entity> GetNamedStashes(int territoryId, string nameContains)
+        {
+            var castleHeart = Core.TerritoryService.GetCastleHeart(territoryId);
+            if (castleHeart == Entity.Null) yield break;
+
+            var sharedInventoryManager = castleHeart.Read<SharedCastleInventoryConnection>().SharedInventoryManager.GetEntityOnServer();
+            if (sharedInventoryManager == Entity.Null) yield break;
+
             nameContains = nameContains.ToLower();
             var sharedCastleInventory = Core.EntityManager.GetBuffer<SharedCastleInventories>(sharedInventoryManager);
-            foreach (var sharedInventory in sharedCastleInventory)
+            for (var i = 0; i < sharedCastleInventory.Length; i++)
             {
+                var sharedInventory = sharedCastleInventory[i];
                 var stash = sharedInventory.InventorySource;
+
+                if (!Core.EntityManager.Exists(stash)) continue;
 
                 var name = stash.Read<NameableInteractable>().Name.ToString().ToLower();
                 if (!name.Contains(nameContains)) continue;

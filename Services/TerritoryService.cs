@@ -16,7 +16,7 @@ namespace KindredLogistics.Services
         readonly Dictionary<WorldRegionType, List<Entity>> territories = [];
         readonly Dictionary<Entity, int> territoryCache = [];
 
-        readonly List<Action<int, Entity>> territoryUpdateCallbacks = [];
+        readonly List<Func<int, Entity, IEnumerator>> territoryUpdateCallbacks = [];
 
         public const int MIN_TERRITORY_ID = 0;
         public const int MAX_TERRITORY_ID = 146;
@@ -71,9 +71,20 @@ namespace KindredLogistics.Services
             Core.StartCoroutine(UpdateLoop());
         }
 
-        public void RegisterTerritoryUpdateCallback(Action<int, Entity> callback)
+        public void RegisterTerritoryUpdateCallback(Func<int, Entity, IEnumerator> callback)
         {
             territoryUpdateCallbacks.Add(callback);
+        }
+
+        float startTime = 0;
+        void StartTimer()
+        {
+            startTime = Time.realtimeSinceStartup;
+        }
+
+        internal bool ShouldUpdateYield()
+        {
+            return Time.realtimeSinceStartup - startTime > 0.005f;
         }
 
         IEnumerator UpdateLoop()
@@ -81,24 +92,48 @@ namespace KindredLogistics.Services
             yield return null;
             while (true)
             {
+                yield return null;
+                StartTimer();
 
                 for (int i = MIN_TERRITORY_ID; i <= MAX_TERRITORY_ID; i++)
                 {
-                    yield return null;
-
                     var castleHeartEntity = GetCastleHeart(i);
                     if (castleHeartEntity == Entity.Null)
                         continue;
 
                     foreach (var callback in territoryUpdateCallbacks)
                     {
+                        IEnumerator enumerator = null;
+                        bool stillRunning = false;
                         try
                         {
-                            callback(i, castleHeartEntity);
+                            enumerator = callback(i, castleHeartEntity);
+                            stillRunning = enumerator.MoveNext();
                         }
                         catch (Exception e)
                         {
                             Core.LogException(e);
+                        }
+
+                        while (stillRunning)
+                        {
+                            yield return null;
+                            StartTimer();
+
+                            try
+                            {
+                                stillRunning = enumerator.MoveNext();
+                            }
+                            catch (Exception e)
+                            {
+                                Core.LogException(e);
+                            }
+                        }
+
+                        if (ShouldUpdateYield())
+                        {
+                            yield return null;
+                            StartTimer();
                         }
                     }
                 }

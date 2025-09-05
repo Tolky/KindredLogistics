@@ -2,6 +2,7 @@
 using ProjectM;
 using ProjectM.CastleBuilding;
 using ProjectM.Network;
+using System.Collections;
 using System.Collections.Generic;
 using Unity.Collections;
 using Unity.Entities;
@@ -75,13 +76,13 @@ class BrazierService
         }
     }
 
-    void UpdateIfBraziersActiveOnTerritory(int territoryId, Entity castleHeartEntity)
+    IEnumerator UpdateIfBraziersActiveOnTerritory(int territoryId, Entity castleHeartEntity)
     {
-        if (!Core.PlayerSettings.IsSolarEnabled(0)) return;
+        if (!Core.PlayerSettings.IsSolarEnabled(0)) yield break;
 
         // Check if any of the clan mates are online and on the territory
         var userOwner = castleHeartEntity.Read<UserOwner>();
-        if (userOwner.Owner.GetEntityOnServer() == Entity.Null) return;
+        if (userOwner.Owner.GetEntityOnServer() == Entity.Null) yield break;
 
         var entitiesToCheckForProximity = new List<Entity>();
         var proxEnable = true;
