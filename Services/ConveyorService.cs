@@ -41,7 +41,7 @@ namespace KindredLogistics.Services
             var serverGameManager = Core.ServerGameManager;
 
             // Determine what is needed for each station
-            var receivingNeeds = new Dictionary<(int group, PrefabGUID item), List<(Entity receiver, int amount)>>();
+            var receivingNeeds = new Dictionary<(int group, PrefabGUID item), List<(Entity receiver, int amount, bool chest)>>();
             foreach (var (group, station) in Core.RefinementStations.GetAllReceivingStations(territoryId))
             {
                 var receivingStation = station.Read<Refinementstation>();
@@ -81,7 +81,7 @@ namespace KindredLogistics.Services
                             receivingNeeds[(group, requirement.Guid)] = needs;
                         }
 
-                        needs.Add((inputInventoryEntity, amountWanted));
+                        needs.Add((inputInventoryEntity, amountWanted, false));
                     }
                 }
             }
@@ -108,7 +108,7 @@ namespace KindredLogistics.Services
                             receivingNeeds[(group, item.ItemType)] = needs;
                         }
 
-                        needs.Add((attachedEntity, 500));
+                        needs.Add((attachedEntity, -1, true));
                     }
                 }
             }
@@ -141,7 +141,7 @@ namespace KindredLogistics.Services
                     if (!attachedEntity.Has<PrefabGUID>()) continue;
                     if (!attachedEntity.Read<PrefabGUID>().Equals(StashService.ExternalInventoryPrefab)) continue;
 
-                    DistributeInventory(receivingNeeds, serverGameManager, group, attachedEntity, retain: 1);
+                    DistributeInventory(receivingNeeds, serverGameManager, group, attachedEntity, retain: 1, chest: true);
                 }
 
                 if (Core.TerritoryService.ShouldUpdateYield())
@@ -424,10 +424,8 @@ namespace KindredLogistics.Services
             }
         }
 
-
-
-        void DistributeInventory(Dictionary<(int group, PrefabGUID item), List<(Entity receiver, int amount)>> receivingNeeds,
-                                 ServerGameManager serverGameManager, int group, Entity inventoryEntity, int retain = 0)
+        void DistributeInventory(Dictionary<(int group, PrefabGUID item), List<(Entity receiver, int amount, bool chest)>> receivingNeeds,
+                                 ServerGameManager serverGameManager, int group, Entity inventoryEntity, int retain = 0, bool chest=false)
         {
             amountToDistribute.Clear();
 
@@ -449,32 +447,55 @@ namespace KindredLogistics.Services
                 // Does anyone need this item?
                 if (!receivingNeeds.TryGetValue((group, item), out var needs)) continue;
 
-                var totalWanted = needs.Sum(x => x.amount);
+                var totalWanted = needs.Where(x => x.amount > 0 && (!chest || !x.chest)).Sum(x => x.amount);
 
                 // If we have more than enough, distribute evenly
                 if (totalWanted <= totalAmount)
                 {
-
+                    var leftoverCount = needs.Where(x => x.amount < 0).Count();
+                    var leftoverAmount = totalAmount - totalWanted;
                     for (int i = needs.Count - 1; i >= 0; i--)
                     {
-                        var (receivingInventoryEntity, wanted) = needs[i];
+                        var (receivingInventoryEntity, wanted, receiverChest) = needs[i];
+
+                        if (chest && receiverChest) continue;
+
                         if (!Core.EntityManager.Exists(receivingInventoryEntity))
                         {
                             needs.RemoveAt(i);
                             continue;
                         }
-                        Utilities.TransferItems(serverGameManager, inventoryEntity, receivingInventoryEntity, item, wanted);
+
+                        if (wanted > 0)
+                        {
+                            Utilities.TransferItems(serverGameManager, inventoryEntity, receivingInventoryEntity, item, wanted);
+                            needs.RemoveAt(i);
+                        }
+                        else
+                        {
+                            var amountToGive = leftoverAmount / leftoverCount;
+                            var amountActuallyGiven = Utilities.TransferItems(serverGameManager, inventoryEntity, receivingInventoryEntity, item, amountToGive);
+
+                            leftoverAmount -= amountActuallyGiven;
+                            leftoverCount--;
+
+                            if (amountActuallyGiven < amountToGive)
+                            {
+                                needs.RemoveAt(i);
+                            }
+                        }
                     }
-                    needs.Clear();
                 }
                 else
                 {
                     var remainder = 0;
                     // Give out proportionally
-
                     for (int i = needs.Count - 1; i >= 0; i--)
                     {
-                        var (receivingInventoryEntity, wanted) = needs[i];
+                        var (receivingInventoryEntity, wanted, receiverChest) = needs[i];
+
+                        if (chest && receiverChest) continue;
+                        if (wanted <= 0) continue;
 
                         if (!Core.EntityManager.Exists(receivingInventoryEntity))
                         {
@@ -503,7 +524,7 @@ namespace KindredLogistics.Services
                         }
                         else
                         {
-                            needs[i] = (receivingInventoryEntity, wanted - transferred);
+                            needs[i] = (receivingInventoryEntity, wanted - transferred, receiverChest);
                         }
                     }
                 }
