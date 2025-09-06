@@ -166,6 +166,11 @@ namespace KindredLogistics.Services
             return GetNamedStashes(territoryId, "brazier");
         }
 
+        public IEnumerable<Entity> GetAllOverflowStashes(int territoryId)
+        {
+            return GetNamedStashes(territoryId, "overflow");
+        }
+
         public void StashCharacterInventory(Entity charEntity)
         {
             try
