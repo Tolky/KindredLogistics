@@ -184,8 +184,11 @@ namespace KindredLogistics.Services
 
             // Empty all salvage outputs first
             var itemStashes = Utilities.GetItemStashesOnTerritory(territoryId);
+            var overflows = Core.Stash.GetAllOverflowStashes(territoryId).ToList();
             foreach (var salvager in salvagers)
             {
+                if (!Core.EntityManager.Exists(salvager.entity)) continue;
+                
                 var salvageStation = salvager.station;
                 var outputInventoryEntity = salvageStation.OutputInventoryEntity.GetEntityOnServer();
 
@@ -194,12 +197,15 @@ namespace KindredLogistics.Services
                 {
                     if (InventoryUtilities.IsInventoryEmpty(inventoryBuffer)) continue;
 
-                    Utilities.StashInventoryEntity(outputInventoryEntity, itemStashes);
+                    Utilities.StashInventoryEntity(outputInventoryEntity, itemStashes, overflows);
                 }
                 finally
                 {
                     inventoryBuffer.Dispose();
                 }
+
+                if (Core.TerritoryService.ShouldUpdateYield())
+                    yield return null;
             }
 
             // Now fill all the salvagers

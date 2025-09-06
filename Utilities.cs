@@ -81,7 +81,7 @@ namespace KindredLogistics
             return matches;
         }
 
-        public static void StashInventoryEntity(Entity inventory, Dictionary<PrefabGUID, List<Entity>> itemInventories)
+        public static void StashInventoryEntity(Entity inventory, Dictionary<PrefabGUID, List<Entity>> itemInventories, List<Entity> overflows)
         {
             var serverGameManager = Core.ServerGameManager;
             if (!serverGameManager.TryGetBuffer<InventoryBuffer>(inventory, out var inventoryBuffer))
@@ -97,6 +97,13 @@ namespace KindredLogistics
                     for(var j = stashEntries.Count - 1; j >= 0; j--)
                     {
                         var stashEntry = stashEntries[j];
+
+                        if (!Core.EntityManager.Exists(stashEntry))
+                        {
+                            stashEntries.RemoveAt(j);
+                            continue;
+                        }
+
                         var transferred = TransferItems(serverGameManager, inventory, stashEntry, item, amountToTransfer); // returns amount transferred
                         amountToTransfer -= transferred;
 
@@ -107,6 +114,16 @@ namespace KindredLogistics
                         }
                         else break;
                     }
+                }
+
+                if (amountToTransfer <= 0) continue;
+
+                foreach(var overflow in overflows)
+                {
+                    if (!Core.EntityManager.Exists(overflow)) continue;
+                    var remainingAmountTransferred = TransferItems(serverGameManager, inventory, overflow, item, amountToTransfer);
+                    amountToTransfer -= remainingAmountTransferred;
+                    if (amountToTransfer <= 0) break;
                 }
             }
         }
