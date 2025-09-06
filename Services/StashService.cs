@@ -19,6 +19,9 @@ namespace KindredLogistics.Services
         const string SKIP_SUFFIX = "''";
         const float FIND_SPOTLIGHT_DURATION = 15f;
 
+        const string OVERFLOW_SUFFIX = "overflow";
+        const string SALVAGE_SUFFIX = "salvage";
+
         static readonly ComponentType[] StashQuery =
             [
                 ComponentType.ReadOnly(Il2CppType.Of<InventoryOwner>()),
@@ -244,6 +247,11 @@ namespace KindredLogistics.Services
                         if (!serverGameManager.TryGetBuffer<AttachedBuffer>(stash, out var buffer))
                             continue;
 
+                        var name = stash.Read<NameableInteractable>().Name.ToString().ToLower();
+
+                        if (name.Contains(SALVAGE_SUFFIX) || name.Contains(OVERFLOW_SUFFIX))
+                            continue;
+
                         foundStash = true;
 
                         foreach (var attachedBuffer in buffer)
@@ -290,6 +298,7 @@ namespace KindredLogistics.Services
                 HashSet<PrefabGUID> transferredItems = [];
                 Dictionary<(Entity stash, PrefabGUID item), int> amountStashed = [];
                 Dictionary<PrefabGUID, int> amountUnstashed = [];
+                var overflowStashes = GetAllOverflowStashes(territoryIndex).ToArray();
                 for (int i = ACTION_BAR_SLOTS; i < inventoryBuffer.Length; i++)
                 {
                     var itemEntry = inventoryBuffer[i];
@@ -339,6 +348,62 @@ namespace KindredLogistics.Services
                                 Core.LogException(e, "Item Entity Storage");
                             }
                         }
+
+                        if (!success)
+                        {
+                            foreach(var overflowStash in overflowStashes)
+                            {
+                                try
+                                {
+                                    if (!serverGameManager.TryGetBuffer<AttachedBuffer>(overflowStash, out var buffer))
+                                        continue;
+                                    
+                                    Entity overflowInventory = Entity.Null;
+                                    foreach (var attachedBuffer in buffer)
+                                    {
+                                        var attachedEntity = attachedBuffer.Entity;
+                                        if (!attachedEntity.Has<PrefabGUID>()) continue;
+                                        if (!attachedEntity.Read<PrefabGUID>().Equals(ExternalInventoryPrefab)) continue;
+                                        overflowInventory = attachedEntity;
+                                        break;
+                                    }
+
+                                    if (overflowInventory == Entity.Null) continue;
+
+                                    var overflowInventoryBuffer = overflowInventory.ReadBuffer<InventoryBuffer>();
+                                    for (int j = 0; j < overflowInventoryBuffer.Length; j++)
+                                    {
+                                        if (!overflowInventoryBuffer[j].ItemType.Equals(PrefabGUID.Empty)) continue;
+                                        
+                                        transferredItems.Add(item);
+                                        overflowInventoryBuffer[j] = itemEntry;
+                                        
+                                        var itemEntity = itemEntry.ItemEntity.GetEntityOnServer();
+                                        if (itemEntity.Has<InventoryItem>())
+                                        {
+                                            var inventoryItem = itemEntity.Read<InventoryItem>();
+                                            inventoryItem.ContainerEntity = overflowStash;
+                                            itemEntity.Write(inventoryItem);
+                                        }
+
+                                        if (amountStashed.TryGetValue((overflowStash, item), out var amount))
+                                            amountStashed[(overflowStash, item)] = amount + 1;
+                                        else
+                                            amountStashed[(overflowStash, item)] = 1;
+
+                                        InventoryUtilitiesServer.ClearSlot(Core.EntityManager, inventory, i);
+                                        success = true;
+                                        break;
+                                    }
+                                    if (success) break;
+                                }
+                                catch (Exception e)
+                                {
+                                    Core.LogException(e, "Overflow Item Entity Storage");
+                                }
+                            }
+                        }
+
                         if (!success)
                         {
                             if (amountUnstashed.TryGetValue(item, out var amount))
@@ -374,6 +439,50 @@ namespace KindredLogistics.Services
                             catch (Exception e)
                             {
                                 Core.LogException(e, "Item Storage");
+                            }
+                        }
+
+                        if (itemEntry.Amount > 0)
+                        {
+                            foreach(var overflowStash in overflowStashes)
+                            {
+                                try
+                                {
+                                    if (!serverGameManager.TryGetBuffer<AttachedBuffer>(overflowStash, out var buffer))
+                                        continue;
+                                    
+                                    Entity overflowInventory = Entity.Null;
+                                    foreach (var attachedBuffer in buffer)
+                                    {
+                                        var attachedEntity = attachedBuffer.Entity;
+                                        if (!attachedEntity.Has<PrefabGUID>()) continue;
+                                        if (!attachedEntity.Read<PrefabGUID>().Equals(ExternalInventoryPrefab)) continue;
+                                        overflowInventory = attachedEntity;
+                                        break;
+                                    }
+
+                                    if (overflowInventory == Entity.Null) continue;
+
+                                    var addItemResponse = InventoryUtilitiesServer.TryAddItem(addItemSettings, overflowInventory, itemEntry);
+                                    if (!addItemResponse.Success) continue;
+
+                                    transferredItems.Add(item);
+                                    var transferredAmount = itemEntry.Amount - addItemResponse.RemainingAmount;
+                                    if (amountStashed.TryGetValue((overflowStash, item), out var amount))
+                                        amountStashed[(overflowStash, item)] = amount + transferredAmount;
+                                    else
+                                        amountStashed[(overflowStash, item)] = transferredAmount;
+                                    itemEntry.Amount = addItemResponse.RemainingAmount;
+                                    if (!addItemResponse.ItemsRemaining)
+                                    {
+                                        InventoryUtilitiesServer.ClearSlot(Core.EntityManager, inventory, i);
+                                        break;
+                                    }
+                                }
+                                catch (Exception e)
+                                {
+                                    Core.LogException(e, "Overflow Item Storage");
+                                }
                             }
                         }
 
