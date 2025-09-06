@@ -303,49 +303,52 @@ namespace KindredLogistics.Services
                 {
                     var itemEntry = inventoryBuffer[i];
                     var item = itemEntry.ItemType;
-                    if (!matches.TryGetValue(item, out var stashEntries)) continue;
+                    
 
                     var hasItemEntity = !itemEntry.ItemEntity.GetEntityOnServer().Equals(Entity.Null);
 
                     if (hasItemEntity)
                     {
                         var success = false;
-                        foreach (var stashEntry in stashEntries)
+                        if (matches.TryGetValue(item, out var stashEntries))
                         {
-                            try
+                            foreach (var stashEntry in stashEntries)
                             {
-                                var stashInventoryBuffer = stashEntry.inventory.ReadBuffer<InventoryBuffer>();
-
-                                for (int j = 0; j < stashInventoryBuffer.Length; j++)
+                                try
                                 {
-                                    if (!stashInventoryBuffer[j].ItemType.Equals(PrefabGUID.Empty)) continue;
+                                    var stashInventoryBuffer = stashEntry.inventory.ReadBuffer<InventoryBuffer>();
 
-                                    transferredItems.Add(item);
-                                    stashInventoryBuffer[j] = itemEntry;
-
-                                    var itemEntity = itemEntry.ItemEntity.GetEntityOnServer();
-                                    if (itemEntity.Has<InventoryItem>())
+                                    for (int j = 0; j < stashInventoryBuffer.Length; j++)
                                     {
-                                        var inventoryItem = itemEntity.Read<InventoryItem>();
-                                        inventoryItem.ContainerEntity = stashEntry.stash;
-                                        itemEntity.Write(inventoryItem);
+                                        if (!stashInventoryBuffer[j].ItemType.Equals(PrefabGUID.Empty)) continue;
+
+                                        transferredItems.Add(item);
+                                        stashInventoryBuffer[j] = itemEntry;
+
+                                        var itemEntity = itemEntry.ItemEntity.GetEntityOnServer();
+                                        if (itemEntity.Has<InventoryItem>())
+                                        {
+                                            var inventoryItem = itemEntity.Read<InventoryItem>();
+                                            inventoryItem.ContainerEntity = stashEntry.stash;
+                                            itemEntity.Write(inventoryItem);
+                                        }
+
+                                        if (amountStashed.TryGetValue((stashEntry.stash, item), out var amount))
+                                            amountStashed[(stashEntry.stash, item)] = amount + 1;
+                                        else
+                                            amountStashed[(stashEntry.stash, item)] = 1;
+
+                                        InventoryUtilitiesServer.ClearSlot(Core.EntityManager, inventory, i);
+                                        success = true;
+                                        break;
                                     }
 
-                                    if (amountStashed.TryGetValue((stashEntry.stash, item), out var amount))
-                                        amountStashed[(stashEntry.stash, item)] = amount + 1;
-                                    else
-                                        amountStashed[(stashEntry.stash, item)] = 1;
-
-                                    InventoryUtilitiesServer.ClearSlot(Core.EntityManager, inventory, i);
-                                    success = true;
-                                    break;
+                                    if (success) break;
                                 }
-
-                                if (success) break;
-                            }
-                            catch (Exception e)
-                            {
-                                Core.LogException(e, "Item Entity Storage");
+                                catch (Exception e)
+                                {
+                                    Core.LogException(e, "Item Entity Storage");
+                                }
                             }
                         }
 
@@ -414,31 +417,34 @@ namespace KindredLogistics.Services
                     }
                     else
                     {
-                        foreach (var stashEntry in stashEntries)
+                        if (matches.TryGetValue(item, out var stashEntries))
                         {
-                            try
+                            foreach (var stashEntry in stashEntries)
                             {
-                                var addItemResponse = InventoryUtilitiesServer.TryAddItem(addItemSettings, stashEntry.inventory, itemEntry);
-
-                                if (!addItemResponse.Success) continue;
-
-                                transferredItems.Add(item);
-                                var transferredAmount = itemEntry.Amount - addItemResponse.RemainingAmount;
-                                if (amountStashed.TryGetValue((stashEntry.stash, item), out var amount))
-                                    amountStashed[(stashEntry.stash, item)] = amount + transferredAmount;
-                                else
-                                    amountStashed[(stashEntry.stash, item)] = transferredAmount;
-
-                                itemEntry.Amount = addItemResponse.RemainingAmount;
-                                if (!addItemResponse.ItemsRemaining)
+                                try
                                 {
-                                    InventoryUtilitiesServer.ClearSlot(Core.EntityManager, inventory, i);
-                                    break;
+                                    var addItemResponse = InventoryUtilitiesServer.TryAddItem(addItemSettings, stashEntry.inventory, itemEntry);
+
+                                    if (!addItemResponse.Success) continue;
+
+                                    transferredItems.Add(item);
+                                    var transferredAmount = itemEntry.Amount - addItemResponse.RemainingAmount;
+                                    if (amountStashed.TryGetValue((stashEntry.stash, item), out var amount))
+                                        amountStashed[(stashEntry.stash, item)] = amount + transferredAmount;
+                                    else
+                                        amountStashed[(stashEntry.stash, item)] = transferredAmount;
+
+                                    itemEntry.Amount = addItemResponse.RemainingAmount;
+                                    if (!addItemResponse.ItemsRemaining)
+                                    {
+                                        InventoryUtilitiesServer.ClearSlot(Core.EntityManager, inventory, i);
+                                        break;
+                                    }
                                 }
-                            }
-                            catch (Exception e)
-                            {
-                                Core.LogException(e, "Item Storage");
+                                catch (Exception e)
+                                {
+                                    Core.LogException(e, "Item Storage");
+                                }
                             }
                         }
 
