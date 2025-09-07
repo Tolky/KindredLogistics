@@ -243,7 +243,7 @@ namespace KindredLogistics.Services
                 var serverGameManager = Core.ServerGameManager;
                 var matches = new Dictionary<PrefabGUID, List<(Entity stash, Entity inventory)>>(capacity: 100);
                 var foundStash = false;
-                foreach (var stash in GetAllAlliedStashesOnTerritory(charEntity))
+                foreach (var stash in GetStashesOnTerritory(territoryIndex))
                 {
                     try
                     {
@@ -541,7 +541,183 @@ namespace KindredLogistics.Services
             {
                 Core.LogException(e, "Stash Character Inventory");
             }
+        }
 
+        public void AdminStash(Entity charEntity, PrefabGUID itemType, int amountToGive)
+        {
+            try
+            {
+                var userEntity = charEntity.Read<PlayerCharacter>().UserEntity;
+                var user = userEntity.Read<User>();
+
+                var territoryIndex = Core.TerritoryService.GetTerritoryId(charEntity);
+                if (territoryIndex == -1)
+                {
+                    Utilities.SendSystemMessageToClient(Core.EntityManager, user, "Unable to stash outside territories!");
+                    return;
+                }
+
+                var castleHeartEntity = Core.TerritoryService.GetCastleHeart(territoryIndex);
+                if (castleHeartEntity == Entity.Null)
+                {
+                    Utilities.SendSystemMessageToClient(Core.EntityManager, user, "There is no heart on this territory!");
+                    return;
+                }
+
+                var serverGameManager = Core.ServerGameManager;
+                var matches = new List<Entity>(capacity: 100);
+                var foundStash = false;
+                foreach (var stash in GetStashesOnTerritory(territoryIndex))
+                {
+                    try
+                    {
+                        if (stash.Has<CastleWorkstation>() &&
+                            stash.Read<CastleWorkstation>().MatchingFloorType != CastleFloorTypes.Treasury)
+                        {
+                            continue;
+                        }
+                        if (!serverGameManager.TryGetBuffer<AttachedBuffer>(stash, out var buffer))
+                            continue;
+
+                        var name = stash.Read<NameableInteractable>().Name.ToString().ToLower();
+
+                        if (name.Contains(SALVAGE_SUFFIX) || name.Contains(OVERFLOW_SUFFIX))
+                            continue;
+
+                        foundStash = true;
+
+                        foreach (var attachedBuffer in buffer)
+                        {
+                            var attachedEntity = attachedBuffer.Entity;
+                            if (!attachedEntity.Has<PrefabGUID>()) continue;
+                            if (!attachedEntity.Read<PrefabGUID>().Equals(ExternalInventoryPrefab)) continue;
+
+                            var checkInventoryBuffer = attachedEntity.ReadBuffer<InventoryBuffer>();
+                            foreach (var inventoryEntry in checkInventoryBuffer)
+                            {
+                                var item = inventoryEntry.ItemType;
+                                if (item != itemType) continue;
+                                matches.Add(stash);
+                                break;
+                            }
+                        }
+                    }
+                    catch (Exception e)
+                    {
+                        Core.LogException(e, "Stash Retrieval");
+                    }
+                }
+
+                if (!foundStash)
+                {
+                    Utilities.SendSystemMessageToClient(Core.EntityManager, user, "Unable to stash as no available stashes found in your current territory!");
+                    return;
+                }
+
+                // get player inventory and find allied owned stashes in same territory with item matches
+                if (!InventoryUtilities.TryGetInventoryEntity(Core.EntityManager, charEntity, out Entity inventory))
+                    return;
+
+                if (!serverGameManager.TryGetBuffer<InventoryBuffer>(inventory, out var inventoryBuffer))
+                    return;
+
+                var addItemSettings = Utilities.GetAddItemSettings();
+                HashSet<PrefabGUID> transferredItems = [];
+                Dictionary<Entity, int> amountStashed = [];
+                Dictionary<PrefabGUID, int> amountUnstashed = [];
+                var overflowStashes = GetAllOverflowStashes(territoryIndex).ToArray();
+                            
+                foreach (var stash in matches)
+                {
+                    try
+                    {
+                        var inventoryResponse = serverGameManager.TryAddInventoryItem(stash, itemType, amountToGive);
+
+                        if (!inventoryResponse.Success) continue;
+                        var transferredAmount = amountToGive - inventoryResponse.RemainingAmount;
+                        amountToGive = inventoryResponse.RemainingAmount;
+
+                        if (amountStashed.TryGetValue(stash, out var amount))
+                            amountStashed[stash] = amount + transferredAmount;
+                        else
+                            amountStashed[stash] = transferredAmount;
+
+                        if (amountToGive <= 0) break;
+                    }
+                    catch (Exception e)
+                    {
+                        Core.LogException(e, "Item Storage");
+                    }
+                }
+
+                if (amountToGive > 0)
+                {
+                    foreach (var overflowStash in overflowStashes)
+                    {
+                        try
+                        {
+                            if (!serverGameManager.TryGetBuffer<AttachedBuffer>(overflowStash, out var buffer))
+                                continue;
+
+                            Entity overflowInventory = Entity.Null;
+                            foreach (var attachedBuffer in buffer)
+                            {
+                                var attachedEntity = attachedBuffer.Entity;
+                                if (!attachedEntity.Has<PrefabGUID>()) continue;
+                                if (!attachedEntity.Read<PrefabGUID>().Equals(ExternalInventoryPrefab)) continue;
+                                overflowInventory = attachedEntity;
+                                break;
+                            }
+
+                            if (overflowInventory == Entity.Null) continue;
+
+
+                            var inventoryResponse = serverGameManager.TryAddInventoryItem(overflowStash, itemType, amountToGive);
+
+                            if (!inventoryResponse.Success) continue;
+                            var transferredAmount = amountToGive - inventoryResponse.RemainingAmount;
+                            amountToGive = inventoryResponse.RemainingAmount;
+
+                            if (amountStashed.TryGetValue(overflowStash, out var amount))
+                                amountStashed[overflowStash] = amount + transferredAmount;
+                            else
+                                amountStashed[overflowStash] = transferredAmount;
+
+                            if (amountToGive <= 0) break;
+                        }
+                        catch (Exception e)
+                        {
+                            Core.LogException(e, "Overflow Item Storage");
+                        }
+                    }
+                }
+
+                if (amountStashed.Count > 0)
+                {
+                    Utilities.SendSystemMessageToClient(Core.EntityManager, user, "Admin stashed items to the current territory!");
+                }
+                else
+                {
+                    Utilities.SendSystemMessageToClient(Core.EntityManager, user, "No items were able to admin stash!");
+                }
+
+                if (!Core.PlayerSettings.IsSilentStashEnabled(user.PlatformId))
+                {
+                    foreach (var (stash, amount) in amountStashed)
+                    {
+                        Utilities.SendSystemMessageToClient(Core.EntityManager, user,
+                                               $"Admin Stashed <color=white>{amount}</color>x <color=green>{itemType.PrefabName()}</color> to <color=#FFC0CB>{stash.EntityName()}</color>");
+                    }
+
+                    if (amountToGive > 0)
+                        Utilities.SendSystemMessageToClient(Core.EntityManager, user,
+                                                            $"Unable to admin stash <color=white>{amountToGive}</color>x <color=green>{itemType.PrefabName()}</color> due to insufficient space in stashes!");
+                }
+            }
+            catch (Exception e)
+            {
+                Core.LogException(e, "AdminStash");
+            }
         }
 
         public void ReportWhereItemIsLocated(Entity charEntity, PrefabGUID item)

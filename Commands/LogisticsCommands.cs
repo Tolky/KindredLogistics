@@ -230,8 +230,13 @@ namespace Logistics.Commands
         [Command(name: "emptytrash", shortHand: "et", description: "Empties all items in your trash containers.")]
         public static void EmptyTrash(ChatCommandContext ctx)
         {
-
             Core.Trash.EmptyTrash(ctx.Event.SenderCharacterEntity);
+        }
+
+        [Command(name: "adminstash", description: "Spawns in items to stash to the current territory.", adminOnly: true)]
+        public static void AdminStash(ChatCommandContext ctx, FoundItem item, int quantity = 1)
+        {
+            Core.Stash.AdminStash(ctx.Event.SenderCharacterEntity, item.prefab, quantity);
         }
     }
 }
