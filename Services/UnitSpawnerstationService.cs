@@ -64,7 +64,16 @@ class UnitSpawnerstationService
         var castleHeartEntity = Core.TerritoryService.GetCastleHeart(territoryId);
         if (!unitSpawnerStationsByHeart.TryGetValue(castleHeartEntity, out var list)) yield break;
 
-        foreach (var stationEntity in list)
+        for (var i = list.Count - 1; i >= 0; i--)
+        {
+            var stationEntity = list[i];
+            if (!Core.EntityManager.Exists(stationEntity))
+            {
+                list.RemoveAt(i);
+                continue;
+            }
+            if (stationEntity.Has<Disabled>()) continue;
             yield return stationEntity;
+        }
     }
 }

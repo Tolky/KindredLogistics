@@ -102,5 +102,9 @@ class TrashService
             if (itemBuffer[i].Amount == 0) continue;
             InventoryUtilitiesServer.ClearSlot(Core.EntityManager, inventory, i);
         }
+
+        var userEntity = charEntity.Read<PlayerCharacter>().UserEntity;
+        var user = userEntity.Read<User>();
+        Utilities.SendSystemMessageToClient(Core.EntityManager, user, "Sunlight, at this hour, in this castle, localized entirely within this trash bin? This trash is ashed.");
     }
 }

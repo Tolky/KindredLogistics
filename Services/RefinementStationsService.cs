@@ -89,9 +89,14 @@ namespace KindredLogistics.Services
             var castleHeartEntity = Core.TerritoryService.GetCastleHeart(territoryId);
             if (!refinementStationsByHeart.TryGetValue(castleHeartEntity, out var list)) yield break;
 
-            for (var i=0; i < list.Count; i++)
+            for (var i = list.Count - 1; i >= 0; i--)
             {
                 var stationEntity = list[i];
+                if (!Core.EntityManager.Exists(stationEntity))
+                {
+                    list.RemoveAt(i);
+                    continue;
+                }
                 if (stationEntity.Has<Disabled>()) continue;
                 var name = stationEntity.Read<NameableInteractable>().Name.ToString().ToLower();
                 foreach (Match match in groupRegex.Matches(name))

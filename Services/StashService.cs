@@ -243,6 +243,7 @@ namespace KindredLogistics.Services
                 var serverGameManager = Core.ServerGameManager;
                 var matches = new Dictionary<PrefabGUID, List<(Entity stash, Entity inventory)>>(capacity: 100);
                 var foundStash = false;
+                var alreadyAdded = new HashSet<PrefabGUID>();
                 foreach (var stash in GetStashesOnTerritory(territoryIndex))
                 {
                     try
@@ -267,18 +268,21 @@ namespace KindredLogistics.Services
                             var attachedEntity = attachedBuffer.Entity;
                             if (!attachedEntity.Has<PrefabGUID>()) continue;
                             if (!attachedEntity.Read<PrefabGUID>().Equals(ExternalInventoryPrefab)) continue;
+                            if (Core.ServerGameManager.HasFullInventory(attachedEntity)) continue;
 
+                            alreadyAdded.Clear();
                             var checkInventoryBuffer = attachedEntity.ReadBuffer<InventoryBuffer>();
                             foreach (var inventoryEntry in checkInventoryBuffer)
                             {
                                 var item = inventoryEntry.ItemType;
                                 if (item.GuidHash == 0) continue;
+                                if (alreadyAdded.Contains(item)) continue;
+                                alreadyAdded.Add(item);
                                 if (!matches.TryGetValue(item, out var itemMatches))
                                 {
                                     itemMatches = [];
                                     matches[item] = itemMatches;
                                 }
-                                else if (itemMatches.Any(x => x.stash == stash)) continue;
                                 itemMatches.Add((stash, attachedEntity));
                             }
                         }
@@ -565,7 +569,7 @@ namespace KindredLogistics.Services
                 }
 
                 var serverGameManager = Core.ServerGameManager;
-                var matches = new List<Entity>(capacity: 100);
+                var matches = new HashSet<Entity>(capacity: 100);
                 var foundStash = false;
                 foreach (var stash in GetStashesOnTerritory(territoryIndex))
                 {
@@ -770,6 +774,45 @@ namespace KindredLogistics.Services
             }
 
             Utilities.SendSystemMessageToClient(Core.EntityManager, user, $"Total <color=green>{itemName}</color> found: <color=white>{totalFound}</color>");
+        }
+
+        public void ReportWhereChestIsLocated(Entity charEntity, string chestName)
+        {
+            var userEntity = charEntity.Read<PlayerCharacter>().UserEntity;
+            var user = userEntity.Read<User>();
+            ClearSpotlights(userEntity);
+            var territoryIndex = Core.TerritoryService.GetTerritoryId(charEntity);
+            if (territoryIndex == -1)
+            {
+                Utilities.SendSystemMessageToClient(Core.EntityManager, user, "Unable to search for chests outside territories!");
+                return;
+            }
+            Utilities.SendSystemMessageToClient(Core.EntityManager, user, "Find Chest Report\n--------------------------------");
+            var serverGameManager = Core.ServerGameManager;
+            var foundStash = false;
+            var totalFound = 0;
+            var searchName = chestName.ToLower();
+            foreach (var stash in GetAllAlliedStashesOnTerritory(charEntity))
+            {
+                var stashName = stash.Read<NameableInteractable>().Name.ToString();
+                var stashNameLower = stashName.ToLower();
+                if (!stashNameLower.Contains(searchName)) continue;
+                foundStash = true;
+                totalFound++;
+
+                // Highlight the searched text within the stash name
+                var highlightedName = stashName.Replace(chestName, $"<color=yellow><b>{chestName}</b></color>", StringComparison.OrdinalIgnoreCase);
+
+                Utilities.SendSystemMessageToClient(Core.EntityManager, user,
+                                       $"Found chest: <color=#FFC0CB>{highlightedName}</color>");
+                AddSpotlight(stash, userEntity);
+            }
+            if (!foundStash)
+            {
+                Utilities.SendSystemMessageToClient(Core.EntityManager, user, "No matching stashes found in your current territory!");
+                return;
+            }
+            Utilities.SendSystemMessageToClient(Core.EntityManager, user, $"Total chests matching <color=green>{chestName}</color>: <color=white>{totalFound}</color>");
         }
 
         void ClearSpotlights(Entity userEntity)

@@ -83,6 +83,7 @@ namespace KindredLogistics.Services
             }
 
             // Determine what is desired by each receiving stash
+            var alreadyAdded = new HashSet<PrefabGUID>();
             foreach (var (group, stash) in Core.Stash.GetAllReceivingStashes(territoryId))
             {
                 if (!serverGameManager.TryGetBuffer<AttachedBuffer>(stash, out var buffer))
@@ -92,11 +93,16 @@ namespace KindredLogistics.Services
                     var attachedEntity = attachedBuffer.Entity;
                     if (!attachedEntity.Has<PrefabGUID>()) continue;
                     if (!attachedEntity.Read<PrefabGUID>().Equals(StashService.ExternalInventoryPrefab)) continue;
+                    if (Core.ServerGameManager.HasFullInventory(attachedEntity)) continue;
 
+                    alreadyAdded.Clear();
                     var inventoryBuffer = attachedEntity.ReadBuffer<InventoryBuffer>();
                     foreach (var item in inventoryBuffer)
                     {
                         if (item.ItemType.GuidHash == 0) continue;
+
+                        if (alreadyAdded.Contains(item.ItemType)) continue;
+                        alreadyAdded.Add(item.ItemType);
 
                         if (!receivingNeeds.TryGetValue((group, item.ItemType), out var needs))
                         {
