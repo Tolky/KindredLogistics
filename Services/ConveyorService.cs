@@ -237,15 +237,20 @@ namespace KindredLogistics.Services
                         {
                             amount = entry.amount;
                         }
+                        else if (isReceiverStash)
+                        {
+                            amount = -1;
+                        }
                         amount += item.Amount;
                         itemAmountsToTransfer[item.ItemType] = (!item.ItemEntity.Equals(NetworkedEntity.Empty), amount);
                     }
 
                     foreach(var (itemType, entry) in itemAmountsToTransfer)
                     { 
-                        var amountToTransfer = entry.amount;
-                        if (isReceiverStash) amountToTransfer -= 1;
-                        if (amountToTransfer <= 0) continue;
+                        var totalAmountToTransfer = entry.amount;
+                        if (totalAmountToTransfer <= 0) continue;
+                        var leftToGetTrash = salvagers.Count - salvagerFull.Count;
+                        if (leftToGetTrash == 0) break;
                         for (var i = salvagers.Count - 1; i >= 0; i--)
                         {
                             if (Core.TerritoryService.ShouldUpdateYield())
@@ -257,23 +262,38 @@ namespace KindredLogistics.Services
                             if (salvagerFull.Contains(salvager.entity)) continue;
 
                             var salvagerKey = (salvager.entity, itemType);
-                            if (salvagerFullOfItem.Contains(salvagerKey)) continue;
-                            if (!Core.EntityManager.Exists(salvager.entity)) continue;
+                            if (salvagerFullOfItem.Contains(salvagerKey))
+                            {
+                                leftToGetTrash--;
+                                continue;
+                            }
+                            if (!Core.EntityManager.Exists(salvager.entity))
+                            {
+                                leftToGetTrash--;
+                                continue;
+                            }
 
                             var salvageStation = salvager.station;
                             var inputInventoryEntity = salvageStation.InputInventoryEntity.GetEntityOnServer();
 
                             var startInputSlot = 0;
                             var amountTransferred = 0;
+
+                            // Ensure non working ones get at least one otherwise distribute somewhat randomly based on current frame
+                            var amountToTransfer = (totalAmountToTransfer + (!salvageStation.IsWorking ? (leftToGetTrash - 1) : Time.frameCount % leftToGetTrash)) / leftToGetTrash;
+                            if (amountToTransfer == 0) continue;
+
                             if (entry.itemEntity)
                                 Utilities.TransferItemEntities(salvageSupplierInventory, inputInventoryEntity, itemType, amountToTransfer, ref startInputSlot, out amountTransferred);
                             else
                                 amountTransferred = Utilities.TransferItems(Core.ServerGameManager, salvageSupplierInventory, inputInventoryEntity, itemType, amountToTransfer);
+                            leftToGetTrash--;
+
                             if (amountTransferred < amountToTransfer)
                             {
                                 if (Core.ServerGameManager.HasFullInventory(inputInventoryEntity))
                                 {
-                                    salvagerFull.Add(salvager.entity);
+                                    salvagers.RemoveAt(i);
                                 }
                                 else
                                 {
@@ -286,7 +306,7 @@ namespace KindredLogistics.Services
                                 continue;
                             }
 
-                            amountToTransfer -= amountTransferred;
+                            totalAmountToTransfer -= amountTransferred;
 
                             if (!salvageStation.IsWorking)
                             {
@@ -295,7 +315,7 @@ namespace KindredLogistics.Services
                                 salvagers[salvager.index] = (salvager.entity, salvageStation, salvager.index);
                             }
 
-                            if (amountToTransfer <= 0) break;
+                            if (totalAmountToTransfer <= 0) break;
                         }
                     }
                 }
