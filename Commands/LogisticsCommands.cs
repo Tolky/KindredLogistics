@@ -226,5 +226,12 @@ namespace Logistics.Commands
         {
             Core.Stash.ReportWhereItemIsLocated(ctx.Event.SenderCharacterEntity, item.prefab);
         }
+
+        [Command(name: "emptytrash", shortHand: "et", description: "Empties all items in your trash containers.")]
+        public static void EmptyTrash(ChatCommandContext ctx)
+        {
+
+            Core.Trash.EmptyTrash(ctx.Event.SenderCharacterEntity);
+        }
     }
 }

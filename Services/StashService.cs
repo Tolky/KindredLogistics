@@ -3,13 +3,13 @@ using ProjectM;
 using ProjectM.CastleBuilding;
 using ProjectM.Network;
 using Stunlock.Core;
-using Stunlock.Network;
 using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text.RegularExpressions;
 using Unity.Collections;
 using Unity.Entities;
+using UnityEngine.TextCore.Text;
 
 namespace KindredLogistics.Services
 {
@@ -174,11 +174,15 @@ namespace KindredLogistics.Services
             return GetNamedStashes(territoryId, "overflow");
         }
 
+        public IEnumerable<Entity> GetAllTrashStashes(int territoryId)
+        {
+            return GetNamedStashes(territoryId, "trash");
+        }
+
         public void StashCharacterInventory(Entity charEntity)
         {
             try
             {
-
                 var userEntity = charEntity.Read<PlayerCharacter>().UserEntity;
                 var user = userEntity.Read<User>();
 
@@ -230,7 +234,11 @@ namespace KindredLogistics.Services
                     return;
                 }
 
-                lastStashed[charEntity] = Core.ServerTime;
+                if (BuffUtility.TryGetBuff(Core.Server.EntityManager, charEntity, Const.Buff_InCombat_PvPVampire, out Entity buffEntity))
+                {
+                    Utilities.SendSystemMessageToClient(Core.EntityManager, user, $"Unable to stash while in PvP combat.");
+                    return;
+                }
 
                 var serverGameManager = Core.ServerGameManager;
                 var matches = new Dictionary<PrefabGUID, List<(Entity stash, Entity inventory)>>(capacity: 100);

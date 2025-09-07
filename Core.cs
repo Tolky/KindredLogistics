@@ -42,6 +42,7 @@ internal static class Core
     public static RegionService RegionService { get; internal set; }
     public static SalvageService SalvageService { get; internal set; }
     public static StashService Stash { get; } = new();
+    public static TrashService Trash { get; } = new();
     public static TerritoryService TerritoryService { get; internal set; }
     public static UnitSpawnerstationService UnitSpawnerstationService { get; internal set; }
     public static BrazierService BrazierService { get; internal set; }
