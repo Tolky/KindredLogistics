@@ -5,7 +5,7 @@ KindredLogistics is a server modification for V Rising that adds expansive featu
 Note: Due to the *vanilla* bug of the advanced furnace having a hidden recipe for bottles, I have added revealing it on them so you can turn it off. 
 
 - It is entirely server side, and you can double tap R with your inventory open to stash, or double click the sort button to stash. (Legacy .stash is also available) Contained within a territory!
-- You can pull items from your chests for crafting by right clicking the recipe in the crafting station!
+- You can pull items from your chests no matter where they are on territory for crafting by right clicking the recipe in the crafting station!
 - Servants will autostash their inventories into chests or mission overflow chests (Label them "spoils").
 - Auto Salvage: Place items in a chest and label it "salvage" to have it automatically send them to a devourer!
 - Unit Spawner Refills: Place items in a chest and label it "spawner" to have it automatically send them to a tomb, vermin nest or stygian spawner!
@@ -15,6 +15,8 @@ Note: Due to the *vanilla* bug of the advanced furnace having a hidden recipe fo
 - Never lose where your stuff is again! Use .finditem to find where your items are stored!
 - Tired of running around from station to station to make something? No worries! Use the conveyor system to link chests and refining inventories for chain crafting!
 - Repair your gear without fetching materials yourself!
+- Trash containers to dump unwanted items into and empty them with ease!
+- Overflow chests for stashing to keep your conveyor system flowing!
 
 This was a collaborative effort from Odjit (Dj) and Zfolmt [(Mitch)](https://www.patreon.com/join/4865914). Feel free to reach out to either of us on the community discord if you have questions or need help with the mod!
 Updated for 1.1 as of 1.5.0
@@ -50,6 +52,7 @@ Check out the details on the WIKI by clicking above!
 | .stash                           | Sends all items besides the hotbar in your inventory to chests in your territory.           |                        |
 | .pull (item) (quantity)          | Takes specified items out of your chests to your inventory.                                 | .pull plank 50         |
 | .finditem (item)                 | Searches for an item and returns the names of the chests that contain it.                   | .fi "Blood Essence"    |
+| .findchest (name)                 | Searches for a chest by name and returns list of matching chests.	                   | .fc sal    |
 
 ## Admin Commands
 
@@ -65,6 +68,8 @@ Check out the details on the WIKI by clicking above!
 | .logisticsglobal brazier         | Turns on or off the ability for players to set up feeding braziers from a labelled chest.     | .lg bz       |
 | .logisticsglobal named           | Turns on or off the ability for players to name braziers night/prox to control behaviour.     | .lg sol      |
 | .logisticsglobal settings         | Shows the enabled/disabled status of the logistics systems.                                  | .lg s        |
+| .adminstash (item) (amount)       | Spawns in items to stash to the current territory                                 |       |
+| .emptytrash        | Empties all items in all of your trash containers at once.                                |        |
 
 
 
