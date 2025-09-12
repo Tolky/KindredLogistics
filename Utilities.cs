@@ -41,7 +41,7 @@ namespace KindredLogistics
             if (!InventoryUtilities.TryGetInventoryEntity(Core.EntityManager, servant, out Entity inventory))
                 return;
 
-            StashInventoryEntity(servant, inventory, "spoils");
+            StashInventoryEntity(servant, inventory, StashService.SPOILS_SUFFIX);
         }
 
         public static Dictionary<PrefabGUID, List<Entity>> GetItemStashesOnTerritory(int territoryId)

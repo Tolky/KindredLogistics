@@ -21,6 +21,7 @@ namespace KindredLogistics.Services
 
         const string OVERFLOW_SUFFIX = "overflow";
         const string SALVAGE_SUFFIX = "salvage";
+        public const string SPOILS_SUFFIX = "spoils";
 
         static readonly ComponentType[] StashQuery =
             [
@@ -86,6 +87,9 @@ namespace KindredLogistics.Services
         {
             foreach (var result in GetAllGroupStashes(receiverRegex, territoryId))
             {
+                var name = result.station.Read<NameableInteractable>().Name.ToString().ToLower();
+                if (name.Contains(OVERFLOW_SUFFIX))
+                    continue;
                 yield return result;
             }
         }
@@ -148,6 +152,7 @@ namespace KindredLogistics.Services
                 if (!Core.EntityManager.Exists(stash)) continue;
 
                 var name = stash.Read<NameableInteractable>().Name.ToString().ToLower();
+                if (name.EndsWith(SKIP_SUFFIX)) continue;
                 if (!name.Contains(nameContains)) continue;
 
                 yield return stash;
@@ -258,7 +263,8 @@ namespace KindredLogistics.Services
 
                         var name = stash.Read<NameableInteractable>().Name.ToString().ToLower();
 
-                        if (name.Contains(SALVAGE_SUFFIX) || name.Contains(OVERFLOW_SUFFIX))
+                        if (name.Contains(SALVAGE_SUFFIX) || name.Contains(OVERFLOW_SUFFIX)
+                            || name.Contains(SPOILS_SUFFIX))
                             continue;
 
                         foundStash = true;
