@@ -153,6 +153,12 @@ namespace KindredLogistics.Services
 
             var castleHeart = castleHeartEntity.Read<CastleHeart>();
             var territoryEntity = castleHeart.CastleTerritoryEntity;
+            if (castleHeart.CastleTerritoryEntity == Entity.Null || !Core.EntityManager.Exists(territoryEntity))
+            {
+                territoryToCastleHeart.Remove(territoryId);
+                return Entity.Null;
+            }
+
             var territory = territoryEntity.Read<CastleTerritory>();
             if (territory.CastleTerritoryIndex != territoryId)
             {

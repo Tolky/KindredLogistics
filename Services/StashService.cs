@@ -274,7 +274,6 @@ namespace KindredLogistics.Services
                             var attachedEntity = attachedBuffer.Entity;
                             if (!attachedEntity.Has<PrefabGUID>()) continue;
                             if (!attachedEntity.Read<PrefabGUID>().Equals(ExternalInventoryPrefab)) continue;
-                            //if (Core.ServerGameManager.HasFullInventory(attachedEntity)) continue;
 
                             alreadyAdded.Clear();
                             var checkInventoryBuffer = attachedEntity.ReadBuffer<InventoryBuffer>();
