@@ -16,6 +16,8 @@ public class Plugin : BasePlugin
     public static Harmony Harmony => plugin._harmony;
     public static ManualLogSource LogInstance => plugin.Log;
 
+    public HookDOTS.API.HookDOTS hookDOTS;
+
     public override void Load()
     {
         plugin = this;
@@ -29,6 +31,9 @@ public class Plugin : BasePlugin
 
         // Register all commands in the assembly with VCF
         CommandRegistry.RegisterAll();
+
+        hookDOTS = new HookDOTS.API.HookDOTS(MyPluginInfo.PLUGIN_GUID, Log);
+        hookDOTS.RegisterAnnotatedHooks();
     }
 
     public override bool Unload()

@@ -24,10 +24,16 @@
   <ItemGroup>
 	  <PackageReference Include="BepInEx.PluginInfoProps" Version="2.*" />
 	  <PackageReference Include="VRising.VampireCommandFramework" Version="0.10.*" />
+	  <!-- <PackageReference Include="HookDOTS.API" Version="1.*" /> -->
   </ItemGroup>
   <ItemGroup>
       <PackageReference Include="System.Text.Json" Version="6.0.11" />
   </ItemGroup>
+
+
+	<ItemGroup>
+		<Reference Include="HookDOTS.API" HintPath="HookDOTS.API.dll" />
+	</ItemGroup>
 
 	<ItemGroup>
 		<Reference Include="Backtrace.Unity" HintPath="..\interop\Backtrace.Unity.dll" />

@@ -22,6 +22,7 @@ namespace KindredLogistics.Services
         public const int MAX_TERRITORY_ID = 146;
 
         readonly Dictionary<int, Entity> territoryToCastleHeart = [];
+        readonly HashSet<int> territoriesRebuilding = [];
 
         public TerritoryService()
         {
@@ -101,6 +102,9 @@ namespace KindredLogistics.Services
                     if (castleHeartEntity == Entity.Null)
                         continue;
 
+                    if (territoriesRebuilding.Contains(i)) continue;
+                    if (castleHeartEntity.Read<CastleRebuildPhaseState>().State != PhaseState.None) continue;
+
                     foreach (var callback in territoryUpdateCallbacks)
                     {
                         IEnumerator enumerator = null;
@@ -148,6 +152,7 @@ namespace KindredLogistics.Services
             if (!Core.EntityManager.Exists(castleHeartEntity))
             {
                 territoryToCastleHeart.Remove(territoryId);
+                territoriesRebuilding.Remove(territoryId);
                 return Entity.Null;
             }
 
@@ -156,6 +161,7 @@ namespace KindredLogistics.Services
             if (castleHeart.CastleTerritoryEntity == Entity.Null || !Core.EntityManager.Exists(territoryEntity))
             {
                 territoryToCastleHeart.Remove(territoryId);
+                territoriesRebuilding.Remove(territoryId);
                 return Entity.Null;
             }
 
@@ -163,6 +169,7 @@ namespace KindredLogistics.Services
             if (territory.CastleTerritoryIndex != territoryId)
             {
                 territoryToCastleHeart.Remove(territoryId);
+                territoriesRebuilding.Remove(territoryId);
                 AddCastleHeart(castleHeartEntity);
                 return Entity.Null;
             }
@@ -188,6 +195,7 @@ namespace KindredLogistics.Services
             if (!Core.EntityManager.Exists(territoryEntity)) return;
             var territory = territoryEntity.Read<CastleTerritory>();
             territoryToCastleHeart.Remove(territory.CastleTerritoryIndex);
+            territoriesRebuilding.Remove(territory.CastleTerritoryIndex);
         }
 
         public void FlushTerritoryCache()
@@ -238,6 +246,12 @@ namespace KindredLogistics.Services
                 }
             }
             return -1;
+        }
+
+        public void MarkTerritoryRebuilding(int territoryId)
+        {
+            Core.Log.LogInfo($"Marking territory {territoryId} as rebuilding.");
+            territoriesRebuilding.Add(territoryId);
         }
     }
 }
