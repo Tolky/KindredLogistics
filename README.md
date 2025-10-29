@@ -1,8 +1,11 @@
 ![](logo.png)
 # KindredLogistics for V Rising 1.1!
-KindredLogistics is a server modification for V Rising that adds expansive features like stashing, crafting, pulling, searching for items, conveyor system for chain crafting, and auto stashing of servant inventories.
 
-Note: Due to the *vanilla* bug of the advanced furnace having a hidden recipe for bottles, I have added revealing it on them so you can turn it off. 
+> **Notice**
+> - Due to the *vanilla* bug of the advanced furnace having a hidden recipe for bottles, Logistics reveals it on the furnace so it can be toggled off.  
+> - **Dependency Added:** KindredLogistics now includes [**HookDOTS API**](https://thunderstore.io/c/v-rising/p/cheesasaurus/HookDOTS_API/) as a required dependency as of v1.6 and above.  
+
+KindredLogistics is a server modification for V Rising that adds expansive features like stashing, crafting, pulling, searching for items, conveyor system for chain crafting, and auto stashing of servant inventories.
 
 - It is entirely server side, and you can double tap R with your inventory open to stash, or double click the sort button to stash. (Legacy .stash is also available) Contained within a territory!
 - You can pull items from your chests no matter where they are on territory for crafting by right clicking the recipe in the crafting station!
@@ -71,6 +74,17 @@ Check out the details on the WIKI by clicking above!
 | .adminstash (item) (amount)       | Spawns in items to stash to the current territory                                 |       |
 | .emptytrash        | Empties all items in all of your trash containers at once.                                |        |
 
+
+
+
+## **Dependencies & Credits**
+- **[HookDOTS API](https://thunderstore.io/c/v-rising/p/cheesasaurus/HookDOTS_API/) by cheesasaurus**: Provides DOTS-compatible hook systems used internally for event handling.  
+- **[VCF](https://thunderstore.io/c/v-rising/p/deca/VampireCommandFramework/) by Deca**: Powers all chat commands in KindredLogistics
+- Special thanks to:
+  - **Zfolmt [(Mitch)](https://www.patreon.com/join/4865914)** for co-developing features in KindredLogistics.
+  - **[V Rising Modding Community](https://vrisingmods.com)** for ideas, testing and feedback.
+- Historical mods that inspired:
+  - *QuickStash* and *QuickBrazier* by assorted authors.
 
 
 
