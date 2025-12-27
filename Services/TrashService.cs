@@ -14,7 +14,15 @@ class TrashService
         var userEntity = charEntity.Read<PlayerCharacter>().UserEntity;
         var user = userEntity.Read<User>();
 
+
         territoryIndex = Core.TerritoryService.GetTerritoryId(charEntity);
+
+        if (Core.PlayerSettings.IsTrashEnabled())
+        {
+            Utilities.SendSystemMessageToClient(Core.EntityManager, user, "Trash is globally disabled.");
+            return false;
+        }
+
         if (territoryIndex == -1)
         {
             Utilities.SendSystemMessageToClient(Core.EntityManager, user, "Unable to empty trash outside territories!");

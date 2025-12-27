@@ -189,6 +189,13 @@ namespace Logistics.Commands
             ctx.Reply($"Global Named is {(solar ? "<color=green>enabled</color>" : "<color=red>disabled</color>")}.");
         }
 
+        [Command(name: "trash", usage: ".lg trash", description:"Toggles the ability to allowed trashes to delete contents.", adminOnly: true )]
+        public static void ToggleTrash(ChatCommandContext ctx)
+        {
+            var trash = Core.PlayerSettings.ToggleTrash();
+            ctx.Reply($"Global Trash is {(trash ? "<color=green>enabled</color>" : "<color=red>disabled</color>")}.");
+        }
+
         [Command(name: "settings", shortHand: "s", usage: ".lg s", description: "Displays current settings.", adminOnly: true)]
         public static void DisplaySettings(ChatCommandContext ctx)
         {
@@ -202,7 +209,9 @@ namespace Logistics.Commands
                       $"Salvage: {(settings.Salvage ? "<color=green>enabled</color>" : "<color=red>disabled</color>")}\n" +
                       $"UnitSpawner: {(settings.UnitSpawner ? "<color=green>enabled</color>" : "<color=red>disabled</color>")}\n" +
                       $"Brazier: {(settings.Brazier ? "<color=green>enabled</color>" : "<color=red>disabled</color>")}\n" +
-                      $"Named: {(settings.Named ? "<color=green>enabled</color>" : "<color=red>disabled</color>")}"
+                      $"Named: {(settings.Named ? "<color=green>enabled</color>" : "<color=red>disabled</color>")}\n" +
+                      $"Trash: {(settings.Trash ? "<color=green>enabled</color>" : "<color=red>disabled</color>")}"
+
                       );
         }
     }

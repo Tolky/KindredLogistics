@@ -36,6 +36,7 @@ namespace KindredLogistics.Services
             public bool Named { get; set; }
             public bool SilentPull { get; set; }
             public bool SilentStash { get; set; }
+            public bool Trash { get; set; }
         }
 
         PlayerSettings defaultSettings = new();
@@ -59,6 +60,7 @@ namespace KindredLogistics.Services
                     UnitSpawner = false,
                     Brazier = false,
                     Named = false,
+                    Trash = true
                 };
                 SaveSettings();
             }
@@ -114,6 +116,21 @@ namespace KindredLogistics.Services
         public bool IsPullEnabled()
         {
             return !playerSettings[GLOBAL_PLAYER_ID].Pull;
+        }
+
+        public bool ToggleTrash()
+        {
+            if (!playerSettings.TryGetValue(GLOBAL_PLAYER_ID, out var settings))
+                settings = new PlayerSettings();
+            settings.Trash = !settings.Trash;
+            playerSettings[GLOBAL_PLAYER_ID] = settings;
+            SaveSettings();
+            return settings.Trash;
+        }
+
+        public bool IsTrashEnabled()
+        {
+            return !playerSettings[GLOBAL_PLAYER_ID].Trash;
         }
 
         public bool IsCraftPullEnabled(ulong playerId)
