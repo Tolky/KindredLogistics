@@ -90,6 +90,7 @@ namespace KindredLogistics
             for (var i = 0; i < inventoryBuffer.Length; i++)
             {
                 var item = inventoryBuffer[i].ItemType;
+                var isItemEntity = !inventoryBuffer[i].ItemEntity.Equals(NetworkedEntity.Empty);
                 if (item.IsEmpty()) continue;
                 var amountToTransfer = serverGameManager.GetInventoryItemCount(inventory, item);
                 if (itemInventories.TryGetValue(item, out var stashEntries)) // if no match straight to spoils
@@ -104,7 +105,11 @@ namespace KindredLogistics
                             continue;
                         }
 
-                        var transferred = TransferItems(serverGameManager, inventory, stashEntry, item, amountToTransfer); // returns amount transferred
+                        int transferred;
+                        if (isItemEntity)
+                            TransferItemEntities(inventory, stashEntry, item, amountToTransfer, ref i, out transferred);
+                        else
+                            transferred = TransferItems(serverGameManager, inventory, stashEntry, item, amountToTransfer);
                         amountToTransfer -= transferred;
 
                         if (amountToTransfer > 0)
@@ -118,11 +123,33 @@ namespace KindredLogistics
 
                 if (amountToTransfer <= 0) continue;
 
-                foreach(var overflow in overflows)
+                ItemData itemData = default;
+                if (overflows.Any() &&
+                    Core.PrefabCollectionSystem._PrefabLookupMap.TryGetValue(item, out var prefab))
+                {
+                    itemData = prefab.Read<ItemData>();
+                }
+
+
+                foreach (var overflow in overflows)
                 {
                     if (!Core.EntityManager.Exists(overflow)) continue;
-                    var remainingAmountTransferred = TransferItems(serverGameManager, inventory, overflow, item, amountToTransfer);
-                    amountToTransfer -= remainingAmountTransferred;
+
+                    if (!serverGameManager.TryGetBuffer<InventoryInstanceElement>(overflow, out var iieBuffer)) continue;
+
+                    foreach (var iie in iieBuffer)
+                    {
+                        if (iie.RestrictedType != PrefabGUID.Empty && iie.RestrictedType != item ||
+                            iie.RestrictedCategory != 0 && (iie.RestrictedCategory & (long)itemData.ItemCategory) == 0)
+                            continue;
+
+                        int transferred = 0;
+                        if (isItemEntity)
+                            TransferItemEntities(inventory, iie.ExternalInventoryEntity.GetEntityOnServer(), item, amountToTransfer, ref i, out transferred);
+                        else
+                            transferred = TransferItems(serverGameManager, inventory, iie.ExternalInventoryEntity.GetEntityOnServer(), item, amountToTransfer);
+                        amountToTransfer -= transferred;
+                    }
                     if (amountToTransfer <= 0) break;
                 }
             }

@@ -16,6 +16,8 @@ namespace KindredLogistics.Services
     {
         readonly Dictionary<PrefabGUID, int> amountToDistribute = [];
 
+        PrefabGUID Item_Building_Siege_Golem_T02 = new(-1461326411);
+
         public ConveyorService()
         {
             Core.TerritoryService.RegisterTerritoryUpdateCallback(ProcessConveyors);
@@ -509,7 +511,7 @@ namespace KindredLogistics.Services
             foreach (var item in inventoryBuffer)
             {
                 if (item.ItemType.GuidHash == 0) continue;
-                if (!item.ItemEntity.Equals(NetworkedEntity.Empty)) continue;
+                if (!item.ItemEntity.Equals(NetworkedEntity.Empty) && item.ItemType != Item_Building_Siege_Golem_T02) continue;
 
                 if (!amountToDistribute.TryGetValue(item.ItemType, out var totalAmountDistribute))
                     totalAmountDistribute = item.Amount;
@@ -626,7 +628,7 @@ namespace KindredLogistics.Services
             foreach (var item in inventoryBuffer)
             {
                 if (item.ItemType.GuidHash == 0) continue;
-                if (!item.ItemEntity.Equals(NetworkedEntity.Empty)) continue;
+                if (!item.ItemEntity.Equals(NetworkedEntity.Empty) && item.ItemType != Item_Building_Siege_Golem_T02) continue;
 
                 if (!amountToDistribute.TryGetValue(item.ItemType, out var totalAmountDistribute))
                     totalAmountDistribute = item.Amount - retain;
@@ -804,7 +806,7 @@ namespace KindredLogistics.Services
             foreach (var item in inventoryBuffer)
             {
                 if (item.ItemType.GuidHash == 0) continue;
-                if (!item.ItemEntity.Equals(NetworkedEntity.Empty)) continue;
+                if (!item.ItemEntity.Equals(NetworkedEntity.Empty) && item.ItemType != Item_Building_Siege_Golem_T02) continue;
 
                 if (!amountToDistribute.TryGetValue(item.ItemType, out var totalAmountDistribute))
                     totalAmountDistribute = item.Amount - retain;

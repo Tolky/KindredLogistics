@@ -10,6 +10,7 @@ using System.Text.RegularExpressions;
 using Unity.Collections;
 using Unity.Entities;
 using UnityEngine.TextCore.Text;
+using UnityEngine.UIElements;
 
 namespace KindredLogistics.Services
 {
@@ -371,21 +372,29 @@ namespace KindredLogistics.Services
 
                         if (!success)
                         {
-                            foreach(var overflowStash in overflowStashes)
+                            ItemData itemData = default;
+                            if (overflowStashes.Any() &&
+                                Core.PrefabCollectionSystem._PrefabLookupMap.TryGetValue(itemEntry.ItemType, out var prefab))
+                            {
+                                itemData = prefab.Read<ItemData>();
+                            }
+
+                            var isSoulshard = itemData.ItemCategory == ItemCategory.Soulshard;
+
+                            foreach (var overflowStash in overflowStashes)
                             {
                                 try
                                 {
-                                    if (!serverGameManager.TryGetBuffer<AttachedBuffer>(overflowStash, out var buffer))
-                                        continue;
-                                    
+                                    if (!serverGameManager.TryGetBuffer<InventoryInstanceElement>(overflowStash, out var iieBuffer)) continue;
+
                                     Entity overflowInventory = Entity.Null;
-                                    foreach (var attachedBuffer in buffer)
+                                    foreach (var iie in iieBuffer)
                                     {
-                                        var attachedEntity = attachedBuffer.Entity;
-                                        if (!attachedEntity.Has<PrefabGUID>()) continue;
-                                        if (!attachedEntity.Read<PrefabGUID>().Equals(ExternalInventoryPrefab)) continue;
-                                        overflowInventory = attachedEntity;
-                                        break;
+                                        if (iie.RestrictedType != PrefabGUID.Empty && iie.RestrictedType != itemData.ItemTypeGUID ||
+                                            iie.RestrictedCategory != 0 && (iie.RestrictedCategory & (long)itemData.ItemCategory) == 0 ||
+                                            isSoulshard && iie.RestrictedCategory == 0)
+                                            continue;
+                                        overflowInventory = iie.ExternalInventoryEntity.GetEntityOnServer();
                                     }
 
                                     if (overflowInventory == Entity.Null) continue;
@@ -467,21 +476,29 @@ namespace KindredLogistics.Services
 
                         if (itemEntry.Amount > 0)
                         {
-                            foreach(var overflowStash in overflowStashes)
+                            ItemData itemData = default;
+                            if (overflowStashes.Any() &&
+                                Core.PrefabCollectionSystem._PrefabLookupMap.TryGetValue(itemEntry.ItemType, out var prefab))
+                            {
+                                itemData = prefab.Read<ItemData>();
+                            }
+
+                            var isSoulshard = itemData.ItemCategory == ItemCategory.Soulshard;
+
+                            foreach (var overflowStash in overflowStashes)
                             {
                                 try
                                 {
-                                    if (!serverGameManager.TryGetBuffer<AttachedBuffer>(overflowStash, out var buffer))
-                                        continue;
-                                    
+                                    if (!serverGameManager.TryGetBuffer<InventoryInstanceElement>(overflowStash, out var iieBuffer)) continue;
+
                                     Entity overflowInventory = Entity.Null;
-                                    foreach (var attachedBuffer in buffer)
+                                    foreach (var iie in iieBuffer)
                                     {
-                                        var attachedEntity = attachedBuffer.Entity;
-                                        if (!attachedEntity.Has<PrefabGUID>()) continue;
-                                        if (!attachedEntity.Read<PrefabGUID>().Equals(ExternalInventoryPrefab)) continue;
-                                        overflowInventory = attachedEntity;
-                                        break;
+                                        if (iie.RestrictedType != PrefabGUID.Empty && iie.RestrictedType != itemData.ItemTypeGUID ||
+                                            iie.RestrictedCategory != 0 && (iie.RestrictedCategory & (long)itemData.ItemCategory) == 0 ||
+                                            isSoulshard && iie.RestrictedCategory == 0)
+                                            continue;
+                                        overflowInventory = iie.ExternalInventoryEntity.GetEntityOnServer();
                                     }
 
                                     if (overflowInventory == Entity.Null) continue;
