@@ -24,6 +24,8 @@ namespace KindredLogistics.Services
         readonly Dictionary<int, Entity> territoryToCastleHeart = [];
         readonly HashSet<int> territoriesRebuilding = [];
 
+        readonly float timeBudget;
+
         public TerritoryService()
         {
             // Load Territories
@@ -69,6 +71,9 @@ namespace KindredLogistics.Services
             }
             castleHeartQuery.Dispose();
 
+            int serverFps = SettingsManager.ServerHostSettings.ServerFps;
+            timeBudget = (1f / serverFps) * 0.15f;
+
             Core.StartCoroutine(UpdateLoop());
         }
 
@@ -85,7 +90,7 @@ namespace KindredLogistics.Services
 
         internal bool ShouldUpdateYield()
         {
-            return Time.realtimeSinceStartup - startTime > 0.005f;
+            return Time.realtimeSinceStartup - startTime > timeBudget;
         }
 
         IEnumerator UpdateLoop()
