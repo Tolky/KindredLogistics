@@ -96,6 +96,7 @@ namespace KindredLogistics.Services
             public readonly List<Entity> BrazierStashes = new(4);
             public readonly List<Entity> TrashStashes = new(4);
             public readonly HashSet<Entity> SalvageReceiverStashes = new(4);
+            public readonly List<Entity> AllStashes = new(32);
 
             public void Clear()
             {
@@ -108,6 +109,7 @@ namespace KindredLogistics.Services
                 BrazierStashes.Clear();
                 TrashStashes.Clear();
                 SalvageReceiverStashes.Clear();
+                AllStashes.Clear();
             }
         }
 
@@ -273,6 +275,8 @@ namespace KindredLogistics.Services
                 var name = GetCachedName(stash);
                 bool isSkipped = name.EndsWith(SKIP_SUFFIX);
 
+                data.AllStashes.Add(stash);
+
                 bool isOverflow = name.Contains(OVERFLOW_SUFFIX);
                 bool isSalvage = name.Contains(SALVAGE_SUFFIX);
                 bool isSpawner = name.Contains("spawner");
@@ -405,6 +409,11 @@ namespace KindredLogistics.Services
         public List<Entity> GetAllTrashStashes(int territoryId)
         {
             return GetOrClassifyTerritory(territoryId).TrashStashes;
+        }
+
+        public List<Entity> GetAllStashes(int territoryId)
+        {
+            return GetOrClassifyTerritory(territoryId).AllStashes;
         }
 
         public bool IsClassifiedAsReceiver(int territoryId, Entity stash)

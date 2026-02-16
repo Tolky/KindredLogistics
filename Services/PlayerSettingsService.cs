@@ -40,6 +40,7 @@ namespace KindredLogistics.Services
             public bool SilentStash { get; set; }
             public bool Trash { get; set; }
             public bool StashBlacklist { get; set; }
+            public bool AutoBase { get; set; }
         }
 
         PlayerSettings defaultSettings = new();
@@ -309,6 +310,23 @@ namespace KindredLogistics.Services
             playerSettings[playerId] = settings;
             SaveSettings();
             return settings.Conveyor;
+        }
+
+        public bool IsAutoBaseEnabled(ulong playerId)
+        {
+            if (!playerSettings.TryGetValue(playerId, out var settings))
+                settings = defaultSettings;
+            return settings.AutoBase && playerSettings[GLOBAL_PLAYER_ID].AutoBase;
+        }
+
+        public bool ToggleAutoBase(ulong playerId = GLOBAL_PLAYER_ID)
+        {
+            if (!playerSettings.TryGetValue(playerId, out var settings))
+                settings = new PlayerSettings();
+            settings.AutoBase = !settings.AutoBase;
+            playerSettings[playerId] = settings;
+            SaveSettings();
+            return settings.AutoBase;
         }
 
         public PlayerSettings GetSettings(ulong playerId)

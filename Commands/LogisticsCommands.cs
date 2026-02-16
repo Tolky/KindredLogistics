@@ -199,6 +199,18 @@ namespace Logistics.Commands
             ctx.Reply($"K{templateId}/O{templateId} set to <color=green>{multiplier}x</color> stack.");
         }
 
+        [Command(name: "autobase", shortHand: "ab", usage: ".l ab", description: "Toggles autobase mode. When enabled, conveyors S/R disabled, machines pull ingredients by W priority.")]
+        public static void ToggleAutoBase(ChatCommandContext ctx)
+        {
+            var SteamID = ctx.Event.User.PlatformId;
+
+            var autoBase = Core.PlayerSettings.ToggleAutoBase(SteamID);
+            // Mark all territories pending for immediate re-evaluation
+            for (int i = TerritoryService.MIN_TERRITORY_ID; i <= TerritoryService.MAX_TERRITORY_ID; i++)
+                ConveyorService.MarkTerritoryPending(i);
+            ctx.Reply($"AutoBase is {(autoBase ? "<color=green>enabled</color> (Conveyor S/R disabled, salvage auto-enabled)" : "<color=red>disabled</color>")}.");
+        }
+
         [Command(name: "settings", shortHand: "s", usage: ".l s", description: "Displays current settings.")]
         public static void DisplaySettings(ChatCommandContext ctx)
         {
@@ -213,6 +225,7 @@ namespace Logistics.Commands
                       $"DontPullLast: {(settings.DontPullLast ? "<color=green>On</color>" : "<color=red>Off</color>")}\n" +
                       $"AutoStashMissions: {(globalSettings.AutoStashMissions ? (settings.AutoStashMissions ? "<color=green>On</color>" : "<color=red>Off</color>") : "<color=red>Server Off</color>")}");
             ctx.Reply(
+                      $"AutoBase: {(globalSettings.AutoBase ? (settings.AutoBase ? "<color=green>On</color>" : "<color=red>Off</color>") : "<color=red>Server Off</color>")}\n" +
                       $"Conveyor: {(globalSettings.Conveyor ? (settings.Conveyor ? "<color=green>On</color>" : "<color=red>Off</color>") : "<color=red>Server Off</color>")}\n" +
                       $"Salvage: {(globalSettings.Salvage ? (settings.Salvage ? "<color=green>On</color>" : "<color=red>Off</color>") : "<color=red>Server Off</color>")}\n" +
                       $"UnitSpawner: {(globalSettings.UnitSpawner ? (settings.UnitSpawner ? "<color=green>On</color>" : "<color=red>Off</color>") : "<color=red>Server Off</color>")}\n" +
@@ -283,6 +296,16 @@ namespace Logistics.Commands
             ctx.Reply($"Global Brazier is {(brazier ? "<color=green>enabled</color>" : "<color=red>disabled</color>")}.");
         }
 
+        [Command(name: "autobase", shortHand: "ab", usage: ".lg ab", description: "Toggles global autobase mode.", adminOnly: true)]
+        public static void ToggleAutoBase(ChatCommandContext ctx)
+        {
+            var autoBase = Core.PlayerSettings.ToggleAutoBase();
+            // Mark all territories pending for immediate re-evaluation
+            for (int i = TerritoryService.MIN_TERRITORY_ID; i <= TerritoryService.MAX_TERRITORY_ID; i++)
+                ConveyorService.MarkTerritoryPending(i);
+            ctx.Reply($"Global AutoBase is {(autoBase ? "<color=green>enabled</color>" : "<color=red>disabled</color>")}.");
+        }
+
         [Command(name: "named", shortHand:"nam", usage: ".lg nam", description: "Toggles the ability allow night/proximity controlled braziers.", adminOnly: true)]
         public static void ToggleSolar(ChatCommandContext ctx)
         {
@@ -306,6 +329,7 @@ namespace Logistics.Commands
                       $"Pull: {(settings.Pull ? "<color=green>enabled</color>" : "<color=red>disabled</color>")}\n" +
                       $"CraftPull: {(settings.CraftPull ? "<color=green>enabled</color>" : "<color=red>disabled</color>")}\n" +
                       $"AutoStashMissions: {(settings.AutoStashMissions ? "<color=green>enabled</color>" : "<color=red>disabled</color>")}\n" +
+                      $"AutoBase: {(settings.AutoBase ? "<color=green>enabled</color>" : "<color=red>disabled</color>")}\n" +
                       $"Conveyor: {(settings.Conveyor ? "<color=green>enabled</color>" : "<color=red>disabled</color>")}\n" +
                       $"Salvage: {(settings.Salvage ? "<color=green>enabled</color>" : "<color=red>disabled</color>")}\n" +
                       $"UnitSpawner: {(settings.UnitSpawner ? "<color=green>enabled</color>" : "<color=red>disabled</color>")}\n" +

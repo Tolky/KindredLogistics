@@ -34,9 +34,11 @@ namespace KindredLogistics.Services
 
         readonly Regex receiverRegex;
         readonly Regex senderRegex;
+        readonly Regex wpRegex;
 
         readonly Dictionary<Entity, List<Entity>> refinementStationsByHeart = [];
         readonly Dictionary<Entity, string> _nameCache = new(capacity: 100);
+        readonly Dictionary<Entity, int> _wpCache = new(capacity: 100);
 
         internal string GetCachedName(Entity entity)
         {
@@ -51,6 +53,19 @@ namespace KindredLogistics.Services
         internal void FlushNameCache()
         {
             _nameCache.Clear();
+            _wpCache.Clear();
+        }
+
+        internal int GetStationWPriority(Entity station)
+        {
+            if (_wpCache.TryGetValue(station, out var priority))
+                return priority;
+
+            var name = GetCachedName(station);
+            var match = wpRegex.Match(name);
+            priority = match.Success ? int.Parse(match.Groups[1].Value) : 0;
+            _wpCache[station] = priority;
+            return priority;
         }
 
         public RefinementStationsService() 
@@ -81,6 +96,7 @@ namespace KindredLogistics.Services
 
             receiverRegex = new Regex(Const.RECEIVER_REGEX, RegexOptions.Compiled);
             senderRegex = new Regex(Const.SENDER_REGEX, RegexOptions.Compiled);
+            wpRegex = new Regex(Const.WORKSTATION_PRIORITY_REGEX, RegexOptions.Compiled);
         }
 
         internal void AddRefinementStation(Entity stationEntity)
@@ -155,6 +171,23 @@ namespace KindredLogistics.Services
             }
         }
 
+        /// <summary>Returns ALL non-disabled refinement stations for a territory (no S/R name filter).</summary>
+        public IEnumerable<Entity> GetAllStations(int territoryId)
+        {
+            var castleHeartEntity = Core.TerritoryService.GetCastleHeart(territoryId);
+            if (!refinementStationsByHeart.TryGetValue(castleHeartEntity, out var list)) yield break;
 
+            for (var i = list.Count - 1; i >= 0; i--)
+            {
+                var stationEntity = list[i];
+                if (!Core.EntityManager.Exists(stationEntity))
+                {
+                    list.RemoveAt(i);
+                    continue;
+                }
+                if (stationEntity.Has<Disabled>()) continue;
+                yield return stationEntity;
+            }
+        }
     }
 }

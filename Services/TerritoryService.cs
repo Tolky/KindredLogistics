@@ -125,7 +125,8 @@ namespace KindredLogistics.Services
                     if (!Core.PlayerSettings.IsConveyorEnabled(CurrentOwnerPlatformId) &&
                         !Core.PlayerSettings.IsSalvageEnabled(CurrentOwnerPlatformId) &&
                         !Core.PlayerSettings.IsUnitSpawnerEnabled(CurrentOwnerPlatformId) &&
-                        !Core.PlayerSettings.IsBrazierEnabled(CurrentOwnerPlatformId))
+                        !Core.PlayerSettings.IsBrazierEnabled(CurrentOwnerPlatformId) &&
+                        !Core.PlayerSettings.IsAutoBaseEnabled(CurrentOwnerPlatformId))
                     {
                         ConveyorService.ConsumePending(i);
                         continue;
