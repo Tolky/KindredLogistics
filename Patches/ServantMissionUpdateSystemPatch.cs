@@ -22,10 +22,10 @@ public static class ServantMissionUpdateSystemPatch
                 var owner = mission.MissionOwner.Read<UserOwner>().Owner._Entity;
                 var steamId = owner.Read<User>().PlatformId;
                 if (!Core.PlayerSettings.IsAutoStashMissionsEnabled(steamId)) continue;
+
                 foreach (var servant in servants)
-                {
                     Utilities.StashServantInventory(servant);
-                }
+                break;
             }
         }
         catch (Exception e)
