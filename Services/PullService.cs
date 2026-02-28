@@ -13,14 +13,63 @@ namespace KindredLogistics.Services
 {
     internal class PullService
     {
-        public static void PullItem(Entity character, PrefabGUID item, int quantity)
+        // Shared validation for all pull operations. Returns false if pull is not allowed.
+        static bool ValidatePullAllowed(Entity character, User user)
         {
-            var user = character.Read<PlayerCharacter>().UserEntity.Read<User>();
             if (Core.PlayerSettings.IsPullEnabled())
             {
                 Utilities.SendSystemMessageToClient(Core.EntityManager, user, "Pulling is globally disabled.");
-                return;
+                return false;
             }
+
+            var downed = new PrefabGUID(-1992158531);
+            if (BuffUtility.TryGetBuff(Core.EntityManager, character, downed, out _))
+            {
+                Utilities.SendSystemMessageToClient(Core.EntityManager, user, "Unable to pull while downed!");
+                return false;
+            }
+
+            var health = character.Read<Health>();
+            if (health.IsDead)
+            {
+                Utilities.SendSystemMessageToClient(Core.EntityManager, user, "Unable to pull when dead!");
+                return false;
+            }
+
+            var territoryIndex = Core.TerritoryService.GetTerritoryId(character);
+            if (territoryIndex == -1)
+            {
+                Utilities.SendSystemMessageToClient(Core.EntityManager, user, "Unable to pull outside territories!");
+                return false;
+            }
+
+            var castleHeartEntity = Core.TerritoryService.GetCastleHeart(territoryIndex);
+            if (castleHeartEntity == Entity.Null)
+            {
+                Utilities.SendSystemMessageToClient(Core.EntityManager, user, "There is no heart on this territory!");
+                return false;
+            }
+
+            if (!Core.ServerGameManager.IsAllies(castleHeartEntity, character))
+            {
+                Utilities.SendSystemMessageToClient(Core.EntityManager, user, "You aren't allies with the heart on this territory!");
+                return false;
+            }
+
+            var castleHeart = castleHeartEntity.Read<CastleHeart>();
+            if (castleHeart.ActiveEvent >= CastleHeartEvent.Attacked)
+            {
+                Utilities.SendSystemMessageToClient(Core.EntityManager, user, $"Unable to pull while castle is {castleHeart.ActiveEvent}");
+                return false;
+            }
+
+            return true;
+        }
+
+        public static void PullItem(Entity character, PrefabGUID item, int quantity)
+        {
+            var user = character.Read<PlayerCharacter>().UserEntity.Read<User>();
+            if (!ValidatePullAllowed(character, user)) return;
 
             if(!Core.GameDataSystem.ItemHashLookupMap.TryGetValue(item, out var itemData))
             {
@@ -28,29 +77,9 @@ namespace KindredLogistics.Services
                 return;
             }
 
-            var downed = new PrefabGUID(-1992158531);
-            if (BuffUtility.TryGetBuff(Core.EntityManager, character, downed, out var buff))
-            {
-                Utilities.SendSystemMessageToClient(Core.EntityManager, user, "Unable to pull while downed!");
-                return;
-            }
-
-            var health = character.Read<Health>();
-            if (health.IsDead)
-            {
-                Utilities.SendSystemMessageToClient(Core.EntityManager, user, "Unable to pull when dead!");
-                return;
-            }
-
             var entityManager = Core.EntityManager;
             var serverGameManager = Core.ServerGameManager;
-            var territoryIndex = Core.TerritoryService.GetTerritoryId(character);
-           
-            if (territoryIndex == -1)
-            {
-                Utilities.SendSystemMessageToClient(Core.EntityManager, user, "Unable to pull outside territories!");
-                return;
-            }
+
             if (!InventoryUtilities.TryGetInventoryEntity(entityManager, character, out Entity inventory))
             {
                 Core.Log.LogWarning($"No inventory found for character {character}.");
@@ -60,26 +89,6 @@ namespace KindredLogistics.Services
             if (BuffUtility.TryGetBuff(Core.EntityManager, character, batform , out var _))
             {
                 Utilities.SendSystemMessageToClient(entityManager, user, "Cannot pull items while in batform.");
-                return;
-            }
-
-            var castleHeartEntity = Core.TerritoryService.GetCastleHeart(territoryIndex);
-            if (castleHeartEntity == Entity.Null)
-            {
-                Utilities.SendSystemMessageToClient(Core.EntityManager, user, "There is no heart on this territory!");
-                return;
-            }
-
-            if (!Core.ServerGameManager.IsAllies(castleHeartEntity, character))
-            {
-                Utilities.SendSystemMessageToClient(Core.EntityManager, user, "You aren't allies with the heart on this territory!");
-                return;
-            }
-
-            var castleHeart = castleHeartEntity.Read<CastleHeart>();
-            if (castleHeart.ActiveEvent >= CastleHeartEvent.Attacked)
-            {
-                Utilities.SendSystemMessageToClient(Core.EntityManager, user, $"Unable to pull while castle is {castleHeart.ActiveEvent.ToString()}");
                 return;
             }
 
@@ -155,6 +164,8 @@ namespace KindredLogistics.Services
         public static void HandleRecipePull(Entity character, Entity workstation, PrefabGUID recipe)
         {
             var user = character.Read<PlayerCharacter>().UserEntity.Read<User>();
+            if (!ValidatePullAllowed(character, user)) return;
+
             var entityManager = Core.EntityManager;
             if (!InventoryUtilities.TryGetInventoryEntity(entityManager, character, out Entity inventory))
             {
@@ -263,53 +274,7 @@ namespace KindredLogistics.Services
             
             if (!missingRequirement) return;
 
-            if (Core.PlayerSettings.IsPullEnabled())
-            {
-                Utilities.SendSystemMessageToClient(Core.EntityManager, user, "Pulling is globally disabled.");
-                return;
-            }
-
-            var downed = new PrefabGUID(-1992158531);
-            if (BuffUtility.TryGetBuff(Core.EntityManager, character, downed, out var buff))
-            {
-                Utilities.SendSystemMessageToClient(Core.EntityManager, user, "Unable to pull while downed!");
-                return;
-            }
-
-            var health = character.Read<Health>();
-            if (health.IsDead)
-            {
-                Utilities.SendSystemMessageToClient(Core.EntityManager, user, "Unable to pull when dead!");
-                return;
-            }
-
-            var territoryIndex = Core.TerritoryService.GetTerritoryId(character);
-
-            if (territoryIndex == -1)
-            {
-                Utilities.SendSystemMessageToClient(Core.EntityManager, user, "Unable to pull outside territories!");
-                return;
-            }
-
-            var castleHeartEntity = Core.TerritoryService.GetCastleHeart(territoryIndex);
-            if (castleHeartEntity == Entity.Null)
-            {
-                Utilities.SendSystemMessageToClient(Core.EntityManager, user, "There is no heart on this territory!");
-                return;
-            }
-
-            if (!Core.ServerGameManager.IsAllies(castleHeartEntity, character))
-            {
-                Utilities.SendSystemMessageToClient(Core.EntityManager, user, "You aren't allies with the heart on this territory!");
-                return;
-            }
-
-            var castleHeart = castleHeartEntity.Read<CastleHeart>();
-            if (castleHeart.ActiveEvent >= CastleHeartEvent.Attacked)
-            {
-                Utilities.SendSystemMessageToClient(Core.EntityManager, user, $"Unable to pull while castle is {castleHeart.ActiveEvent.ToString()}");
-                return;
-            }
+            if (!ValidatePullAllowed(character, user)) return;
 
             // Determine the multiple of the recipe we currently have then we will try to fetch up to one more recipe's worth of materials
             var recipeName = recipeEntity.Read<PrefabGUID>().LookupName();
@@ -337,6 +302,8 @@ namespace KindredLogistics.Services
         public static void HandleForgePull(Entity character, Entity workstation, Entity item)
         {
             var user = character.Read<PlayerCharacter>().UserEntity.Read<User>();
+            if (!ValidatePullAllowed(character, user)) return;
+
             var entityManager = Core.EntityManager;
             if (!InventoryUtilities.TryGetInventoryEntity(entityManager, character, out Entity inventory))
             {
@@ -400,6 +367,8 @@ namespace KindredLogistics.Services
         public static void HandleForgeUpgradePull(Entity character, Entity workstation, Entity item)
         {
             var user = character.Read<PlayerCharacter>().UserEntity.Read<User>();
+            if (!ValidatePullAllowed(character, user)) return;
+
             var entityManager = Core.EntityManager;
             if (!InventoryUtilities.TryGetInventoryEntity(entityManager, character, out Entity inventory))
             {
