@@ -6,8 +6,6 @@ using System.Collections;
 using System.Collections.Generic;
 using Unity.Collections;
 using Unity.Entities;
-using Unity.Transforms;
-using UnityEngine;
 
 namespace KindredLogistics.Services;
 class BrazierService
@@ -84,51 +82,41 @@ class BrazierService
 
     IEnumerator UpdateIfBraziersActiveOnTerritory(int territoryId, Entity castleHeartEntity)
     {
+        if (!ConveyorService.IsTerritoryPending(territoryId)) yield break;
         if (!Core.PlayerSettings.IsSolarEnabled(0)) yield break;
 
-        // Check if any of the clan mates are online and on the territory
         var userOwner = castleHeartEntity.Read<UserOwner>();
         if (userOwner.Owner.GetEntityOnServer() == Entity.Null) yield break;
 
-        var entitiesToCheckForProximity = new List<Entity>();
-        var proxEnable = true;
+        // Determine if any clan member (or solo owner) is connected and on this territory
+        var proxEnable = false;
         var ownerEntity = userOwner.Owner.GetEntityOnServer();
         var user = ownerEntity.Read<User>();
         var clanEntity = user.ClanEntity.GetEntityOnServer();
         if (clanEntity == Entity.Null)
         {
-            var character = user.LocalCharacter.GetEntityOnServer();
-            // No clan, so check only the owner
-            if (!user.IsConnected || Core.TerritoryService.GetTerritoryId(character) != territoryId)
+            // No clan: check if owner is connected and on this territory
+            if (user.IsConnected)
             {
-                proxEnable = false;
-            }
-            else
-            {
-                entitiesToCheckForProximity.Add(character);
+                var character = user.LocalCharacter.GetEntityOnServer();
+                if (character != Entity.Null && Core.TerritoryService.GetTerritoryId(character) == territoryId)
+                    proxEnable = true;
             }
         }
         else
         {
-            var foundOnlineMemberOnTerritory = false;
+            // Clan: check if any connected member is on this territory
             var members = Core.EntityManager.GetBuffer<ClanMemberStatus>(clanEntity);
             var userBuffer = Core.EntityManager.GetBuffer<SyncToUserBuffer>(clanEntity);
             for (var i = 0; i < members.Length; ++i)
             {
                 if (!members[i].IsConnected) continue;
-
                 var character = userBuffer[i].UserEntity.Read<User>().LocalCharacter.GetEntityOnServer();
-                if (Core.TerritoryService.GetTerritoryId(character) == territoryId)
+                if (character != Entity.Null && Core.TerritoryService.GetTerritoryId(character) == territoryId)
                 {
-                    foundOnlineMemberOnTerritory = true;
-                    entitiesToCheckForProximity.Add(character);
+                    proxEnable = true;
+                    break;
                 }
-            }
-
-            if (!foundOnlineMemberOnTerritory)
-            {
-                proxEnable = false;
-                entitiesToCheckForProximity.Clear();
             }
         }
 
@@ -140,28 +128,10 @@ class BrazierService
             var name = nameableInteractable.Name.ToString().ToLower();
             if (name.Contains("prox"))
             {
-                const float proxDistance = 20f;
-
-                var shouldEnable = proxEnable;
-                if (shouldEnable)
-                {
-                    var brazierPosition = brazier.Read<Translation>().Value.xz;
-                    shouldEnable = false;
-                    foreach (var entity in entitiesToCheckForProximity)
-                    {
-                        var entityPosition = entity.Read<Translation>().Value.xz;
-                        if (Vector2.Distance(brazierPosition, entityPosition) <= proxDistance)
-                        {
-                            shouldEnable = true;
-                            break;
-                        }
-                    }
-                }
-
                 var burnContainer = brazier.Read<BurnContainer>();
-                if (burnContainer.Enabled != shouldEnable)
+                if (burnContainer.Enabled != proxEnable)
                 {
-                    burnContainer.Enabled = shouldEnable;
+                    burnContainer.Enabled = proxEnable;
                     brazier.Write(burnContainer);
 
                     if (!modified.Contains(brazier))
