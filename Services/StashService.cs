@@ -8,6 +8,7 @@ using System.Collections.Generic;
 using System.Text.RegularExpressions;
 using Unity.Collections;
 using Unity.Entities;
+
 namespace KindredLogistics.Services
 {
     internal class StashService
@@ -47,6 +48,34 @@ namespace KindredLogistics.Services
         readonly Dictionary<Entity, string> _nameCache = new(capacity: 200);
         readonly Dictionary<Entity, int> _priorityCache = new(capacity: 200);
 
+        internal class TerritoryStashData
+        {
+            public readonly List<Entity> NormalStashes = new(32);
+            public readonly List<(int group, Entity stash)> ReceiverStashes = new(16);
+            public readonly List<(int group, Entity stash)> SenderStashes = new(16);
+            public readonly List<Entity> OverflowStashes = new(4);
+            public readonly List<Entity> SalvageStashes = new(4);
+            public readonly List<Entity> SpawnerStashes = new(4);
+            public readonly List<Entity> BrazierStashes = new(4);
+            public readonly List<Entity> TrashStashes = new(4);
+            public readonly HashSet<Entity> SalvageReceiverStashes = new(4);
+
+            public void Clear()
+            {
+                NormalStashes.Clear();
+                ReceiverStashes.Clear();
+                SenderStashes.Clear();
+                OverflowStashes.Clear();
+                SalvageStashes.Clear();
+                SpawnerStashes.Clear();
+                BrazierStashes.Clear();
+                TrashStashes.Clear();
+                SalvageReceiverStashes.Clear();
+            }
+        }
+
+        readonly Dictionary<int, TerritoryStashData> _territoryCache = new(capacity: 32);
+
         internal string GetCachedName(Entity entity)
         {
             if (!_nameCache.TryGetValue(entity, out var name))
@@ -77,34 +106,6 @@ namespace KindredLogistics.Services
             _priorityCache.Clear();
             _territoryCache.Clear();
         }
-
-        internal class TerritoryStashData
-        {
-            public readonly List<Entity> NormalStashes = new(32);
-            public readonly List<(int group, Entity stash)> ReceiverStashes = new(16);
-            public readonly List<(int group, Entity stash)> SenderStashes = new(16);
-            public readonly List<Entity> OverflowStashes = new(4);
-            public readonly List<Entity> SalvageStashes = new(4);
-            public readonly List<Entity> SpawnerStashes = new(4);
-            public readonly List<Entity> BrazierStashes = new(4);
-            public readonly List<Entity> TrashStashes = new(4);
-            public readonly HashSet<Entity> SalvageReceiverStashes = new(4);
-
-            public void Clear()
-            {
-                NormalStashes.Clear();
-                ReceiverStashes.Clear();
-                SenderStashes.Clear();
-                OverflowStashes.Clear();
-                SalvageStashes.Clear();
-                SpawnerStashes.Clear();
-                BrazierStashes.Clear();
-                TrashStashes.Clear();
-                SalvageReceiverStashes.Clear();
-            }
-        }
-
-        readonly Dictionary<int, TerritoryStashData> _territoryCache = new(capacity: 32);
 
         internal void InvalidateTerritory(int territoryId)
         {
@@ -146,7 +147,7 @@ namespace KindredLogistics.Services
                 if (!Core.EntityManager.Exists(stash)) continue;
 
                 var name = GetCachedName(stash);
-                if (name.EndsWith(SKIP_SUFFIX)) continue;
+                bool isSkipped = name.EndsWith(SKIP_SUFFIX);
 
                 bool isOverflow = name.Contains(OVERFLOW_SUFFIX);
                 bool isSalvage = name.Contains(SALVAGE_SUFFIX);
@@ -165,7 +166,7 @@ namespace KindredLogistics.Services
                 if (isBrazier) data.BrazierStashes.Add(stash);
                 if (isTrash) data.TrashStashes.Add(stash);
 
-                if (!isSalvage && !isOverflow && !name.Contains(SPOILS_SUFFIX))
+                if (!isSalvage && !isOverflow && !name.Contains(SPOILS_SUFFIX) && !isSkipped)
                     data.NormalStashes.Add(stash);
 
                 var stashTerritoryId = Core.TerritoryService.GetTerritoryId(stash);
