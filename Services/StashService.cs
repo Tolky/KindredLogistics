@@ -46,7 +46,10 @@ namespace KindredLogistics.Services
         
         const float STASH_COOLDOWN = 1f;
         readonly Dictionary<Entity, double> lastStashed = [];
+        const int DEFAULT_STASH_PRIORITY = 5;
+        static readonly Regex priorityRegex = new(@"(?<![A-Za-z])P(\d)(?!\d)", RegexOptions.Compiled | RegexOptions.IgnoreCase);
         readonly Dictionary<Entity, string> _nameCache = new(capacity: 200);
+        readonly Dictionary<Entity, int> _priorityCache = new(capacity: 200);
 
         internal string GetCachedName(Entity entity)
         {
@@ -58,9 +61,22 @@ namespace KindredLogistics.Services
             return name;
         }
 
+        internal int GetStashPriority(Entity stash)
+        {
+            if (_priorityCache.TryGetValue(stash, out var priority))
+                return priority;
+
+            var name = GetCachedName(stash);
+            var match = priorityRegex.Match(name);
+            priority = match.Success ? int.Parse(match.Groups[1].Value) : DEFAULT_STASH_PRIORITY;
+            _priorityCache[stash] = priority;
+            return priority;
+        }
+
         internal void FlushNameCache()
         {
             _nameCache.Clear();
+            _priorityCache.Clear();
             _territoryCache.Clear();
         }
 
@@ -331,6 +347,11 @@ namespace KindredLogistics.Services
                 {
                     Utilities.SendSystemMessageToClient(Core.EntityManager, user, "Unable to stash as no available stashes found in your current territory!");
                     return;
+                }
+
+                foreach (var itemMatches in matches.Values)
+                {
+                    itemMatches.Sort((a, b) => GetStashPriority(a.stash).CompareTo(GetStashPriority(b.stash)));
                 }
 
                 // get player inventory and find allied owned stashes in same territory with item matches
