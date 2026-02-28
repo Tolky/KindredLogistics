@@ -5,19 +5,30 @@ using ProjectM.Shared;
 using Stunlock.Core;
 using System.Collections;
 using System.Collections.Generic;
-using System.Linq;
+
 using Unity.Collections;
 using Unity.Entities;
 using UnityEngine;
 
 namespace KindredLogistics.Services
 {
+    // Singleton enumerator that does nothing — avoids heap allocation for disabled callbacks
+    sealed class EmptyEnumerator : IEnumerator
+    {
+        public static readonly EmptyEnumerator Instance = new();
+        public object Current => null;
+        public bool MoveNext() => false;
+        public void Reset() { }
+    }
+
     internal class ConveyorService
     {
         readonly Dictionary<PrefabGUID, int> amountToDistribute = [];
         readonly Dictionary<(int group, PrefabGUID item), List<(Entity receiver, int amount, bool chest)>> _receivingNeeds = new(32);
         readonly HashSet<PrefabGUID> _alreadyAdded = new(32);
-
+        readonly Dictionary<PrefabGUID, List<(Entity receiver, int amount)>> _unitSpawnerNeeds = new(8);
+        readonly Dictionary<PrefabGUID, List<(Entity receiver, int amount)>> _brazierNeeds = new(8);
+        static readonly List<Entity> _emptyOverflowList = new();
 
         public ConveyorService()
         {
@@ -29,13 +40,18 @@ namespace KindredLogistics.Services
 
         IEnumerator ProcessConveyors(int territoryId, Entity castleHeartEntity)
         {
-            if (!Core.PlayerSettings.IsConveyorEnabled(0)) yield break;
-
+            if (!Core.PlayerSettings.IsConveyorEnabled(0)) return EmptyEnumerator.Instance;
             var userOwner = castleHeartEntity.Read<UserOwner>();
-            if (userOwner.Owner.GetEntityOnServer() == Entity.Null) yield break;
-
+            if (userOwner.Owner.GetEntityOnServer() == Entity.Null) return EmptyEnumerator.Instance;
             var platformID = userOwner.Owner.GetEntityOnServer().Read<User>().PlatformId;
-            if (!Core.PlayerSettings.IsConveyorEnabled(platformID)) yield break;
+            if (!Core.PlayerSettings.IsConveyorEnabled(platformID)) return EmptyEnumerator.Instance;
+            return ProcessConveyorsImpl(territoryId, castleHeartEntity);
+        }
+
+        IEnumerator ProcessConveyorsImpl(int territoryId, Entity castleHeartEntity)
+        {
+            var userOwner = castleHeartEntity.Read<UserOwner>();
+            var platformID = userOwner.Owner.GetEntityOnServer().Read<User>().PlatformId;
 
             var serverGameManager = Core.ServerGameManager;
 
@@ -165,7 +181,6 @@ namespace KindredLogistics.Services
             }
 
             // Next distribute from all the send stashes
-            List<Entity> emptyList = [];
             foreach (var (group, sendingStash) in Core.Stash.GetAllSendingStashes(territoryId))
             {
                 if (!Core.EntityManager.Exists(sendingStash)) continue;
@@ -178,7 +193,7 @@ namespace KindredLogistics.Services
                     if (!attachedEntity.Has<PrefabGUID>()) continue;
                     if (!attachedEntity.Read<PrefabGUID>().Equals(StashService.ExternalInventoryPrefab)) continue;
 
-                    DistributeInventory(_receivingNeeds, serverGameManager, group, attachedEntity, emptyList, retain: 1, chest: true);
+                    DistributeInventory(_receivingNeeds, serverGameManager, group, attachedEntity, _emptyOverflowList, retain: 1, chest: true);
                 }
 
                 if (Core.TerritoryService.ShouldUpdateYield())
@@ -193,18 +208,20 @@ namespace KindredLogistics.Services
 
         IEnumerator ProcessSalvagers(int territoryId, Entity castleHeartEntity)
         {
-            if (!Core.PlayerSettings.IsSalvageEnabled(0)) yield break;
+            if (!Core.PlayerSettings.IsSalvageEnabled(0)) return EmptyEnumerator.Instance;
+            var userOwner = castleHeartEntity.Read<UserOwner>();
+            if (userOwner.Owner.GetEntityOnServer() == Entity.Null) return EmptyEnumerator.Instance;
+            var platformID = userOwner.Owner.GetEntityOnServer().Read<User>().PlatformId;
+            if (!Core.PlayerSettings.IsSalvageEnabled(platformID)) return EmptyEnumerator.Instance;
+            return ProcessSalvagersImpl(territoryId, castleHeartEntity);
+        }
 
+        IEnumerator ProcessSalvagersImpl(int territoryId, Entity castleHeartEntity)
+        {
             _salvagers.Clear();
             var idx = 0;
             foreach (var s in Core.SalvageService.GetAllSalvageStations(territoryId))
                 _salvagers.Add((s, s.Read<Salvagestation>(), idx++));
-
-            var userOwner = castleHeartEntity.Read<UserOwner>();
-            if (userOwner.Owner.GetEntityOnServer() == Entity.Null) yield break;
-
-            var platformID = userOwner.Owner.GetEntityOnServer().Read<User>().PlatformId;
-            if (!Core.PlayerSettings.IsSalvageEnabled(platformID)) yield break;
 
             // Empty all salvage outputs first
             var itemStashes = Utilities.GetItemStashesOnTerritory(territoryId);
@@ -350,18 +367,22 @@ namespace KindredLogistics.Services
 
         IEnumerator ProcessUnitSpawners(int territoryId, Entity castleHeartEntity)
         {
-            if (!Core.PlayerSettings.IsUnitSpawnerEnabled(0)) yield break;
-
+            if (!Core.PlayerSettings.IsUnitSpawnerEnabled(0)) return EmptyEnumerator.Instance;
             var userOwner = castleHeartEntity.Read<UserOwner>();
-            if (userOwner.Owner.GetEntityOnServer() == Entity.Null) yield break;
-
+            if (userOwner.Owner.GetEntityOnServer() == Entity.Null) return EmptyEnumerator.Instance;
             var platformID = userOwner.Owner.GetEntityOnServer().Read<User>().PlatformId;
-            if (!Core.PlayerSettings.IsUnitSpawnerEnabled(platformID)) yield break;
+            if (!Core.PlayerSettings.IsUnitSpawnerEnabled(platformID)) return EmptyEnumerator.Instance;
+            return ProcessUnitSpawnersImpl(territoryId, castleHeartEntity);
+        }
+
+        IEnumerator ProcessUnitSpawnersImpl(int territoryId, Entity castleHeartEntity)
+        {
 
             var serverGameManager = Core.ServerGameManager;
 
-            // Determine what is needed for each brazier
-            var receivingNeeds = new Dictionary<PrefabGUID, List<(Entity, int)>>();
+            // Determine what is needed for each unit spawner
+            _unitSpawnerNeeds.Clear();
+            var receivingNeeds = _unitSpawnerNeeds;
             foreach (var station in Core.UnitSpawnerstationService.GetAllUnitSpawners(territoryId))
             {
                 var castleWorkstation = station.Read<CastleWorkstation>();
@@ -440,20 +461,23 @@ namespace KindredLogistics.Services
 
         IEnumerator ProcessBraziers(int territoryId, Entity castleHeartEntity)
         {
-            if (!Core.PlayerSettings.IsBrazierEnabled(0)) yield break;
-
-            const int minAmount = 10;
-
+            if (!Core.PlayerSettings.IsBrazierEnabled(0)) return EmptyEnumerator.Instance;
             var userOwner = castleHeartEntity.Read<UserOwner>();
-            if (userOwner.Owner.GetEntityOnServer() == Entity.Null) yield break;
-
+            if (userOwner.Owner.GetEntityOnServer() == Entity.Null) return EmptyEnumerator.Instance;
             var platformID = userOwner.Owner.GetEntityOnServer().Read<User>().PlatformId;
-            if (!Core.PlayerSettings.IsBrazierEnabled(platformID)) yield break;
+            if (!Core.PlayerSettings.IsBrazierEnabled(platformID)) return EmptyEnumerator.Instance;
+            return ProcessBraziersImpl(territoryId, castleHeartEntity);
+        }
+
+        IEnumerator ProcessBraziersImpl(int territoryId, Entity castleHeartEntity)
+        {
+            const int minAmount = 10;
 
             var serverGameManager = Core.ServerGameManager;
 
             // Determine what is needed for each brazier
-            var receivingNeeds = new Dictionary<PrefabGUID, List<(Entity, int)>>();
+            _brazierNeeds.Clear();
+            var receivingNeeds = _brazierNeeds;
             foreach (var brazier in Core.BrazierService.GetAllBraziers(territoryId))
             {
                 var burnContainer = brazier.Read<BurnContainer>();
