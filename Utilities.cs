@@ -1,4 +1,3 @@
-using Il2CppInterop.Runtime;
 using KindredLogistics.Services;
 using ProjectM;
 using ProjectM.CastleBuilding;
@@ -7,7 +6,6 @@ using ProjectM.Scripting;
 using Stunlock.Core;
 using System;
 using System.Collections.Generic;
-using System.Linq;
 using Unity.Collections;
 using Unity.Entities;
 
@@ -15,27 +13,6 @@ namespace KindredLogistics
 {
     public class Utilities
     {
-        public static readonly ComponentType[] StashQuery =
-            [
-                ComponentType.ReadOnly(Il2CppType.Of<InventoryOwner>()),
-                ComponentType.ReadOnly(Il2CppType.Of<CastleHeartConnection>()),
-                ComponentType.ReadOnly(Il2CppType.Of<AttachedBuffer>()),
-                ComponentType.ReadOnly(Il2CppType.Of<NameableInteractable>()),
-            ];
-
-        public static readonly ComponentType[] RefinementStationQuery =
-            [
-                ComponentType.ReadOnly(Il2CppType.Of<Team>()),
-                ComponentType.ReadOnly(Il2CppType.Of<CastleHeartConnection>()),
-                ComponentType.ReadOnly(Il2CppType.Of<Refinementstation>()),
-                ComponentType.ReadOnly(Il2CppType.Of<NameableInteractable>()),
-            ];
-
-        public static readonly ComponentType[] UserEntityQuery =
-        [
-                ComponentType.ReadOnly(Il2CppType.Of<User>()),
-        ];
-
         public static void StashServantInventory(Entity servant)
         {
             if (!InventoryUtilities.TryGetInventoryEntity(Core.EntityManager, servant, out Entity inventory))
@@ -124,7 +101,7 @@ namespace KindredLogistics
                 if (amountToTransfer <= 0) continue;
 
                 ItemData itemData = default;
-                if (overflows.Any() &&
+                if (overflows.Count > 0 &&
                     Core.PrefabCollectionSystem._PrefabLookupMap.TryGetValue(item, out var prefab))
                 {
                     itemData = prefab.Read<ItemData>();
@@ -192,7 +169,13 @@ namespace KindredLogistics
                                 itemMatches = [];
                                 matches[item] = itemMatches;
                             }
-                            else if (itemMatches.Any(x => x.stash == stash)) continue;
+                            else
+                            {
+                                bool alreadyHasStash = false;
+                                foreach (var m in itemMatches)
+                                    if (m.stash == stash) { alreadyHasStash = true; break; }
+                                if (alreadyHasStash) continue;
+                            }
                             itemMatches.Add((stash, attachedEntity));
                         }
                     }
@@ -226,29 +209,6 @@ namespace KindredLogistics
             {
                 Core.Log.LogError($"Exited StashServantInventory early: {e}");
             }
-        }
-
-        public static bool TerritoryCheck(Entity character, Entity target)
-        {
-            if (!target.Has<CastleHeartConnection>())
-                return false;
-
-            var charPos = character.Read<TilePosition>();
-            var heart = target.Read<CastleHeartConnection>().CastleHeartEntity.GetEntityOnServer();
-            var castleHeart = heart.Read<CastleHeart>();
-            var castleTerritory = castleHeart.CastleTerritoryEntity;
-            return CastleTerritoryExtensions.IsTileInTerritory(Core.EntityManager, charPos.Tile, ref castleTerritory, out var _);
-        }
-
-        public static bool SharedHeartConnection(Entity input, Entity ouput)
-        {
-            if (input.Has<CastleHeartConnection>() && ouput.Has<CastleHeartConnection>())
-            {
-                var inputHeart = input.Read<CastleHeartConnection>().CastleHeartEntity._Entity;
-                var outputHeart = ouput.Read<CastleHeartConnection>().CastleHeartEntity._Entity;
-                return inputHeart.Equals(outputHeart);
-            }
-            return false;
         }
 
         static void CheckIfInventoryEmpty(Entity inventory)
