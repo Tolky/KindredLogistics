@@ -46,6 +46,22 @@ namespace KindredLogistics.Services
         
         const float STASH_COOLDOWN = 1f;
         readonly Dictionary<Entity, double> lastStashed = [];
+        readonly Dictionary<Entity, string> _nameCache = new(capacity: 200);
+
+        internal string GetCachedName(Entity entity)
+        {
+            if (!_nameCache.TryGetValue(entity, out var name))
+            {
+                name = entity.Read<NameableInteractable>().Name.ToString().ToLower();
+                _nameCache[entity] = name;
+            }
+            return name;
+        }
+
+        internal void FlushNameCache()
+        {
+            _nameCache.Clear();
+        }
 
         public StashService()
         {
