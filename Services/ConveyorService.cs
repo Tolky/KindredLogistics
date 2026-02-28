@@ -57,8 +57,7 @@ namespace KindredLogistics.Services
                     var requirements = recipeEntity.ReadBuffer<RecipeRequirementBuffer>();
                     foreach (var requirement in requirements)
                     {
-                        // Always desire 5x the transferring so the moment it finishes it immediately starts again
-                        var amountWanted = 5 * Mathf.RoundToInt(requirement.Amount * matchFloorReduction);
+                        var singleCraftAmount = Mathf.RoundToInt(requirement.Amount * matchFloorReduction);
 
                         // Check how much is already in the inventory
                         int has = 0;
@@ -66,9 +65,20 @@ namespace KindredLogistics.Services
                         {
                             if (item.ItemType.Equals(requirement.Guid))
                             {
-                                amountWanted -= item.Amount;
-                                has = item.Amount;
+                                has += item.Amount;
                             }
+                        }
+
+                        int amountWanted;
+                        if (has >= singleCraftAmount)
+                        {
+                            // Already has enough for 1 craft, buffer up to 5x
+                            amountWanted = 5 * singleCraftAmount - has;
+                        }
+                        else
+                        {
+                            // Not enough for 1 craft, only request what's needed to complete 1
+                            amountWanted = singleCraftAmount - has;
                         }
 
                         if (amountWanted <= 0) continue;
@@ -731,8 +741,9 @@ namespace KindredLogistics.Services
                 else
                 {
                     var totalTransferred = 0;
-                    var remainder = 0;
-                    // Give out proportionally
+                    var remaining = totalAmount;
+
+                    // Fill sequentially so each station gets enough for a complete craft
                     for (int i = needs.Count - 1; i >= 0; i--)
                     {
                         var (receivingInventoryEntity, wanted, receiverChest) = needs[i];
@@ -742,31 +753,22 @@ namespace KindredLogistics.Services
 
                         if (!Core.EntityManager.Exists(receivingInventoryEntity))
                         {
-                            totalWanted -= wanted;
                             needs.RemoveAt(i);
                             continue;
                         }
 
-                        var numerator = (long)wanted * totalAmount;
-                        var transferring = (int)(numerator / totalWanted);
-                        remainder += (int)(numerator % totalWanted);
-                        if (remainder >= totalWanted && transferring < wanted)
-                        {
-                            transferring++;
-                            remainder -= totalWanted;
-                        }
+                        if (remaining <= 0) break;
+
+                        var transferring = System.Math.Min(wanted, remaining);
                         var transferred = Utilities.TransferItems(serverGameManager, inventoryEntity, receivingInventoryEntity, item, transferring);
                         totalTransferred += transferred;
-                        if (transferred < transferring)
-                        {
-                            remainder += totalWanted * (transferring - transferred);
-                            needs.RemoveAt(i);
-                        }
-                        else if (transferred >= wanted)
+                        remaining -= transferred;
+
+                        if (transferred >= wanted)
                         {
                             needs.RemoveAt(i);
                         }
-                        else
+                        else if (transferred > 0)
                         {
                             needs[i] = (receivingInventoryEntity, wanted - transferred, receiverChest);
                         }
