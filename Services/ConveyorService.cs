@@ -24,11 +24,25 @@ namespace KindredLogistics.Services
     internal class ConveyorService
     {
         readonly Dictionary<PrefabGUID, int> amountToDistribute = [];
-        readonly Dictionary<(int group, PrefabGUID item), List<(Entity receiver, int amount, bool chest)>> _receivingNeeds = new(32);
+        readonly Dictionary<(int group, PrefabGUID item), List<(Entity receiver, int amount, bool chest, int recipeAmount)>> _receivingNeeds = new(32);
         readonly HashSet<PrefabGUID> _alreadyAdded = new(32);
+        readonly Dictionary<PrefabGUID, int> _availableInStashes = new(64);
+        readonly Dictionary<int, int> _recipeStationCount = new(16);
+        readonly Dictionary<int, int> _recipeStationsRemaining = new(16);
+        readonly Dictionary<PrefabGUID, int> _ingredientHas = new(8);
+        readonly List<(int group, Entity station, Entity inputInv, float matchFloor, int recipeStart, int recipeCount, int invStart, int invCount)> _collectedStations = new(16);
+        readonly List<int> _activeRecipeHashes = new(64);
+        readonly List<(PrefabGUID itemType, int amount)> _inventorySlots = new(512);
+        // Permanent cache: recipe requirements never change at runtime
+        readonly Dictionary<int, (PrefabGUID guid, int amount)[]> _cachedRecipeReqs = new(64);
         readonly Dictionary<PrefabGUID, List<(Entity receiver, int amount)>> _unitSpawnerNeeds = new(8);
         readonly Dictionary<PrefabGUID, List<(Entity receiver, int amount)>> _brazierNeeds = new(8);
         static readonly List<Entity> _emptyOverflowList = new();
+        // Station metadata cache: survives across runs, invalidated by StationVersion change or periodic refresh
+        readonly Dictionary<int, List<(int group, Entity station, Entity inputInv, float matchFloor)>> _stationMetaCache = new();
+        int _stationMetaVersion = -1;
+        int _lastCacheRebuildFrame = -1;
+        const int CACHE_REBUILD_INTERVAL = 150;
 
         public ConveyorService()
         {
@@ -55,58 +69,226 @@ namespace KindredLogistics.Services
 
             var serverGameManager = Core.ServerGameManager;
 
-            // Determine what is needed for each station
-            _receivingNeeds.Clear();
-            foreach (var (group, station) in Core.RefinementStations.GetAllReceivingStations(territoryId))
+            // Rebuild station metadata cache if stations were added/removed or periodically (for renames)
+            var currentVersion = RefinementStationsService.StationVersion;
+            if (_stationMetaVersion != currentVersion || Time.frameCount - _lastCacheRebuildFrame > CACHE_REBUILD_INTERVAL)
             {
-                var receivingStation = station.Read<Refinementstation>();
-                var castleWorkstation = station.Read<CastleWorkstation>();
-                var matchFloorReduction = castleWorkstation.WorkstationLevel.HasFlag(WorkstationLevel.MatchingFloor) ? 0.75f : 1f;
-                var inputInventoryEntity = receivingStation.InputInventoryEntity.GetEntityOnServer();
-                var inventoryBuffer = inputInventoryEntity.ReadBuffer<InventoryBuffer>();
-                var recipesBuffer = station.ReadBuffer<RefinementstationRecipesBuffer>();
-                foreach (var recipe in recipesBuffer)
+                _stationMetaCache.Clear();
+                _stationMetaVersion = currentVersion;
+                _lastCacheRebuildFrame = Time.frameCount;
+            }
+            if (!_stationMetaCache.TryGetValue(territoryId, out var stationMeta))
+            {
+                stationMeta = new(16);
+                foreach (var gs in Core.RefinementStations.GetAllReceivingStations(territoryId))
                 {
-                    if (!recipe.Unlocked) continue;
-                    if (recipe.Disabled) continue;
+                    var st = gs.station;
+                    var refStation = st.Read<Refinementstation>();
+                    var castleWs = st.Read<CastleWorkstation>();
+                    var inputInv = refStation.InputInventoryEntity.GetEntityOnServer();
+                    var matchFloor = castleWs.WorkstationLevel.HasFlag(WorkstationLevel.MatchingFloor) ? 0.75f : 1f;
+                    stationMeta.Add((gs.group, st, inputInv, matchFloor));
+                }
+                _stationMetaCache[territoryId] = stationMeta;
+            }
 
-                    Entity recipeEntity = Core.PrefabCollectionSystem._PrefabGuidToEntityMap[recipe.RecipeGuid];
-                    var requirements = recipeEntity.ReadBuffer<RecipeRequirementBuffer>();
-                    foreach (var requirement in requirements)
+            // Pre-scan: only read dynamic data (RecipesBuffer + InventoryBuffer) per station
+            _recipeStationCount.Clear();
+            _collectedStations.Clear();
+            _activeRecipeHashes.Clear();
+            _inventorySlots.Clear();
+            for (int smi = stationMeta.Count - 1; smi >= 0; smi--)
+            {
+                var (group, st, inputInv, matchFloor) = stationMeta[smi];
+                if (!Core.EntityManager.Exists(st))
+                {
+                    stationMeta.RemoveAt(smi);
+                    continue;
+                }
+
+                var recipeStart = _activeRecipeHashes.Count;
+                var recipesBuffer = st.ReadBuffer<RefinementstationRecipesBuffer>();
+                foreach (var r in recipesBuffer)
+                {
+                    if (!r.Unlocked || r.Disabled) continue;
+                    var key = r.RecipeGuid.GuidHash;
+                    _activeRecipeHashes.Add(key);
+                    // Cache recipe requirements permanently (they never change at runtime)
+                    if (!_cachedRecipeReqs.TryGetValue(key, out var cachedReqs))
                     {
-                        var singleCraftAmount = Mathf.RoundToInt(requirement.Amount * matchFloorReduction);
+                        Entity recipeEntity = Core.PrefabCollectionSystem._PrefabGuidToEntityMap[r.RecipeGuid];
+                        var reqs = recipeEntity.ReadBuffer<RecipeRequirementBuffer>();
+                        cachedReqs = new (PrefabGUID, int)[reqs.Length];
+                        for (int ri = 0; ri < reqs.Length; ri++)
+                            cachedReqs[ri] = (reqs[ri].Guid, reqs[ri].Amount);
+                        _cachedRecipeReqs[key] = cachedReqs;
+                    }
+                    if (cachedReqs.Length >= 2)
+                    {
+                        _recipeStationCount.TryGetValue(key, out var c);
+                        _recipeStationCount[key] = c + 1;
+                    }
+                }
 
-                        // Check how much is already in the inventory
-                        int has = 0;
-                        foreach (var item in inventoryBuffer)
+                // Cache inventory contents (avoids IL2CPP InventoryBuffer reads in mainLoop)
+                var invStart = _inventorySlots.Count;
+                var invBuf = inputInv.ReadBuffer<InventoryBuffer>();
+                foreach (var slot in invBuf)
+                    if (slot.ItemType.GuidHash != 0 && slot.Amount > 0)
+                        _inventorySlots.Add((slot.ItemType, slot.Amount));
+                var invCount = _inventorySlots.Count - invStart;
+
+                _collectedStations.Add((group, st, inputInv, matchFloor, recipeStart, _activeRecipeHashes.Count - recipeStart, invStart, invCount));
+            }
+
+            var hasMultiIngredient = _recipeStationCount.Count > 0;
+
+            // Only scan stash inventories if there are multi-ingredient recipes on this territory
+            _availableInStashes.Clear();
+            _recipeStationsRemaining.Clear();
+            if (hasMultiIngredient)
+            {
+                foreach (var overflowStash in Core.Stash.GetAllOverflowStashes(territoryId))
+                {
+                    if (!serverGameManager.TryGetBuffer<AttachedBuffer>(overflowStash, out var buf)) continue;
+                    foreach (var att in buf)
+                    {
+                        if (!att.Entity.Has<PrefabGUID>()) continue;
+                        if (!att.Entity.Read<PrefabGUID>().Equals(StashService.ExternalInventoryPrefab)) continue;
+                        foreach (var slot in att.Entity.ReadBuffer<InventoryBuffer>())
                         {
-                            if (item.ItemType.Equals(requirement.Guid))
+                            if (slot.ItemType.GuidHash != 0 && slot.Amount > 0)
                             {
-                                has += item.Amount;
+                                _availableInStashes.TryGetValue(slot.ItemType, out var cur);
+                                _availableInStashes[slot.ItemType] = cur + slot.Amount;
+                            }
+                        }
+                    }
+                }
+                foreach (var (_, sendingStash) in Core.Stash.GetAllSendingStashes(territoryId))
+                {
+                    if (!serverGameManager.TryGetBuffer<AttachedBuffer>(sendingStash, out var buf)) continue;
+                    foreach (var att in buf)
+                    {
+                        if (!att.Entity.Has<PrefabGUID>()) continue;
+                        if (!att.Entity.Read<PrefabGUID>().Equals(StashService.ExternalInventoryPrefab)) continue;
+                        foreach (var slot in att.Entity.ReadBuffer<InventoryBuffer>())
+                        {
+                            if (slot.ItemType.GuidHash != 0 && slot.Amount > 0)
+                            {
+                                _availableInStashes.TryGetValue(slot.ItemType, out var cur);
+                                _availableInStashes[slot.ItemType] = cur + slot.Amount;
+                            }
+                        }
+                    }
+                }
+
+                // Initialize per-recipe station counters for fair distribution
+                foreach (var (hash, count) in _recipeStationCount)
+                    _recipeStationsRemaining[hash] = count;
+            }
+
+            // Determine what is needed for each station (ZERO ECS reads — all from cached data)
+            _receivingNeeds.Clear();
+            for (int si = 0; si < _collectedStations.Count; si++)
+            {
+                var (group, station, inputInventoryEntity, matchFloorReduction, recipeStart, recipeCount, invStart, invCount) = _collectedStations[si];
+
+                // Build ingredient map ONCE per station from cached inventory (pure managed)
+                _ingredientHas.Clear();
+                for (int ii = invStart; ii < invStart + invCount; ii++)
+                {
+                    var (itemType, amount) = _inventorySlots[ii];
+                    _ingredientHas.TryGetValue(itemType, out var cur);
+                    _ingredientHas[itemType] = cur + amount;
+                }
+
+                for (int rci = 0; rci < recipeCount; rci++)
+                {
+                    var recipeHash = _activeRecipeHashes[recipeStart + rci];
+                    if (!_cachedRecipeReqs.TryGetValue(recipeHash, out var requirements)) continue;
+                    var reqCount = requirements.Length;
+
+                    // For multi-ingredient recipes, compute balanced allocation using
+                    // per-ingredient remaining pool + machine contents
+                    int maxCrafts = 50; // default buffer for single-ingredient recipes
+                    if (reqCount >= 2)
+                    {
+                        _recipeStationsRemaining.TryGetValue(recipeHash, out var stationsRemaining);
+                        if (stationsRemaining < 1) stationsRemaining = 1;
+
+                        // Uncapped maxCrafts: machine contents + remaining stash ingredients
+                        maxCrafts = int.MaxValue;
+                        for (int ri = 0; ri < reqCount; ri++)
+                        {
+                            var perCraft = Mathf.RoundToInt(requirements[ri].amount * matchFloorReduction);
+                            if (perCraft <= 0) continue;
+                            _ingredientHas.TryGetValue(requirements[ri].guid, out var has);
+                            _availableInStashes.TryGetValue(requirements[ri].guid, out var remaining);
+                            var crafts = (has + remaining) / perCraft;
+                            if (crafts < maxCrafts) maxCrafts = crafts;
+                        }
+                        if (maxCrafts == int.MaxValue) maxCrafts = 0;
+
+                        // Fair cap: each station gets at most ceil(uncapped / stationsRemaining)
+                        var fairCap = (maxCrafts + stationsRemaining - 1) / stationsRemaining;
+                        maxCrafts = fairCap;
+                        if (maxCrafts > 50) maxCrafts = 50;
+
+                        // Deduct from per-ingredient remaining pool
+                        for (int ri = 0; ri < reqCount; ri++)
+                        {
+                            var perCraft = Mathf.RoundToInt(requirements[ri].amount * matchFloorReduction);
+                            if (perCraft <= 0) continue;
+                            _ingredientHas.TryGetValue(requirements[ri].guid, out var has);
+                            var pull = System.Math.Max(0, maxCrafts * perCraft - has);
+                            if (pull > 0)
+                            {
+                                _availableInStashes.TryGetValue(requirements[ri].guid, out var remaining);
+                                _availableInStashes[requirements[ri].guid] = System.Math.Max(0, remaining - pull);
                             }
                         }
 
-                        int amountWanted;
-                        if (has >= singleCraftAmount)
-                        {
-                            // Already has enough for 1 craft, buffer up to 5x
-                            amountWanted = 5 * singleCraftAmount - has;
-                        }
-                        else
-                        {
-                            // Not enough for 1 craft, only request what's needed to complete 1
-                            amountWanted = singleCraftAmount - has;
-                        }
+                        _recipeStationsRemaining[recipeHash] = stationsRemaining - 1;
+
+                        // If no crafts possible, skip this recipe
+                        if (maxCrafts <= 0) continue;
+                    }
+
+                    for (int ri = 0; ri < reqCount; ri++)
+                    {
+                        var singleCraftAmount = Mathf.RoundToInt(requirements[ri].amount * matchFloorReduction);
+
+                        // All recipes use _ingredientHas (built once per station above)
+                        _ingredientHas.TryGetValue(requirements[ri].guid, out var has);
+
+                        var amountWanted = maxCrafts * singleCraftAmount - has;
 
                         if (amountWanted <= 0) continue;
 
-                        if (!_receivingNeeds.TryGetValue((group, requirement.Guid), out var needs))
+                        if (!_receivingNeeds.TryGetValue((group, requirements[ri].guid), out var needs))
                         {
                             needs = [];
-                            _receivingNeeds[(group, requirement.Guid)] = needs;
+                            _receivingNeeds[(group, requirements[ri].guid)] = needs;
                         }
 
-                        needs.Add((inputInventoryEntity, amountWanted, false));
+                        // Don't add duplicate entries for the same station - take MAX demand
+                        // (multiple recipes at the same station may share ingredients)
+                        bool alreadyRegistered = false;
+                        for (int ni = 0; ni < needs.Count; ni++)
+                        {
+                            if (needs[ni].receiver == inputInventoryEntity)
+                            {
+                                if (amountWanted > needs[ni].amount)
+                                    needs[ni] = (inputInventoryEntity, amountWanted, false, singleCraftAmount);
+                                alreadyRegistered = true;
+                                break;
+                            }
+                        }
+                        if (!alreadyRegistered)
+                        {
+                            needs.Add((inputInventoryEntity, amountWanted, false, singleCraftAmount));
+                        }
                     }
                 }
             }
@@ -140,14 +322,14 @@ namespace KindredLogistics.Services
                             _receivingNeeds[(group, item.ItemType)] = needs;
                         }
 
-                        needs.Add((attachedEntity, -1, true));
+                        needs.Add((attachedEntity, -1, true, 0));
                     }
                 }
             }
 
             if (_receivingNeeds.Count == 0) yield break;
 
-            Dictionary<PrefabGUID, List<List<(Entity receiver, int amount, bool chest)>>> ungroupedItemLookup = null;
+            Dictionary<PrefabGUID, List<List<(Entity receiver, int amount, bool chest, int recipeAmount)>>> ungroupedItemLookup = null;
             // First distribute from overflow stashes
             var overflowStashes = Core.Stash.GetAllOverflowStashes(territoryId);
             foreach (var overflowStash in overflowStashes)
@@ -199,6 +381,7 @@ namespace KindredLogistics.Services
                 if (Core.TerritoryService.ShouldUpdateYield())
                     yield return null;
             }
+
         }
 
         readonly HashSet<Entity> salvagerFull = [];
@@ -540,9 +723,9 @@ namespace KindredLogistics.Services
             }
         }
 
-        void DistributeInventoryFromOverflow(Dictionary<(int group, PrefabGUID item), List<(Entity receiver, int amount, bool chest)>> receivingNeeds,
+        void DistributeInventoryFromOverflow(Dictionary<(int group, PrefabGUID item), List<(Entity receiver, int amount, bool chest, int recipeAmount)>> receivingNeeds,
                                  ServerGameManager serverGameManager, Entity inventoryEntity,
-                                 ref Dictionary<PrefabGUID, List<List<(Entity receiver, int amount, bool chest)>>> ungroupedItemLookup)
+                                 ref Dictionary<PrefabGUID, List<List<(Entity receiver, int amount, bool chest, int recipeAmount)>>> ungroupedItemLookup)
         {
             amountToDistribute.Clear();
 
@@ -598,7 +781,7 @@ namespace KindredLogistics.Services
                     {
                         for (var ei = needs[li].Count - 1; ei >= 0; ei--)
                         {
-                            var (receivingInventoryEntity, wanted, receiverChest) = needs[li][ei];
+                            var (receivingInventoryEntity, wanted, receiverChest, recipeAmount) = needs[li][ei];
 
                             if (!Core.EntityManager.Exists(receivingInventoryEntity))
                             {
@@ -629,11 +812,13 @@ namespace KindredLogistics.Services
                 {
                     var remainder = 0;
                     // Give out proportionally - iterate in reverse to safely RemoveAt
+                    // Pass 1: proportional with recipe rounding
+                    var totalTransferred = 0;
                     for (var li = needs.Count - 1; li >= 0; li--)
                     {
                         for (var ei = needs[li].Count - 1; ei >= 0; ei--)
                         {
-                            var (receivingInventoryEntity, wanted, receiverChest) = needs[li][ei];
+                            var (receivingInventoryEntity, wanted, receiverChest, recipeAmount) = needs[li][ei];
                             if (wanted <= 0) continue;
 
                             if (!Core.EntityManager.Exists(receivingInventoryEntity))
@@ -651,10 +836,13 @@ namespace KindredLogistics.Services
                                 transferring++;
                                 remainder -= totalWanted;
                             }
+                            if (recipeAmount > 0 && transferring < wanted)
+                                transferring = (transferring / recipeAmount) * recipeAmount;
+                            if (transferring <= 0) continue;
                             var transferred = Utilities.TransferItems(serverGameManager, inventoryEntity, receivingInventoryEntity, item, transferring);
+                            totalTransferred += transferred;
                             if (transferred < transferring)
                             {
-                                remainder += (transferring - transferred) * totalWanted;
                                 needs[li].RemoveAt(ei);
                             }
                             else if (transferred >= wanted)
@@ -663,7 +851,48 @@ namespace KindredLogistics.Services
                             }
                             else
                             {
-                                needs[li][ei] = (receivingInventoryEntity, wanted - transferred, receiverChest);
+                                needs[li][ei] = (receivingInventoryEntity, wanted - transferred, receiverChest, recipeAmount);
+                            }
+                        }
+                    }
+
+                    // Pass 2: remaining to stations in recipe multiples (fair sequential)
+                    var overflowRemaining = totalAmount - totalTransferred;
+                    if (overflowRemaining > 0)
+                    {
+                        var stationsLeft = 0;
+                        for (var li = 0; li < needs.Count; li++)
+                            for (var ei = 0; ei < needs[li].Count; ei++)
+                                if (needs[li][ei].recipeAmount > 0 && needs[li][ei].amount > 0)
+                                    stationsLeft++;
+
+                        for (var li = needs.Count - 1; li >= 0 && overflowRemaining > 0 && stationsLeft > 0; li--)
+                        {
+                            for (var ei = needs[li].Count - 1; ei >= 0 && overflowRemaining > 0 && stationsLeft > 0; ei--)
+                            {
+                                var (receivingInventoryEntity, wanted, receiverChest, recipeAmount) = needs[li][ei];
+                                if (recipeAmount <= 0 || wanted <= 0) continue;
+                                if (overflowRemaining < recipeAmount) { stationsLeft--; continue; }
+                                if (!Core.EntityManager.Exists(receivingInventoryEntity))
+                                {
+                                    needs[li].RemoveAt(ei);
+                                    stationsLeft--;
+                                    continue;
+                                }
+
+                                var fairCap = (overflowRemaining / stationsLeft / recipeAmount) * recipeAmount;
+                                if (fairCap < recipeAmount) fairCap = recipeAmount;
+                                var transferring = System.Math.Min(wanted, System.Math.Min(overflowRemaining, fairCap));
+                                transferring = (transferring / recipeAmount) * recipeAmount;
+                                if (transferring <= 0) { stationsLeft--; continue; }
+
+                                var transferred = Utilities.TransferItems(serverGameManager, inventoryEntity, receivingInventoryEntity, item, transferring);
+                                overflowRemaining -= transferred;
+                                stationsLeft--;
+                                if (transferred >= wanted)
+                                    needs[li].RemoveAt(ei);
+                                else
+                                    needs[li][ei] = (receivingInventoryEntity, wanted - transferred, receiverChest, recipeAmount);
                             }
                         }
                     }
@@ -671,7 +900,7 @@ namespace KindredLogistics.Services
             }
         }
 
-        void DistributeInventory(Dictionary<(int group, PrefabGUID item), List<(Entity receiver, int amount, bool chest)>> receivingNeeds,
+        void DistributeInventory(Dictionary<(int group, PrefabGUID item), List<(Entity receiver, int amount, bool chest, int recipeAmount)>> receivingNeeds,
                                  ServerGameManager serverGameManager, int group, Entity inventoryEntity, List<Entity> overflowStashes, int retain = 0, bool chest=false)
         {
             amountToDistribute.Clear();
@@ -734,7 +963,7 @@ namespace KindredLogistics.Services
 
                     for (int i = needs.Count - 1; i >= 0; i--)
                     {
-                        var (receivingInventoryEntity, wanted, receiverChest) = needs[i];
+                        var (receivingInventoryEntity, wanted, receiverChest, recipeAmount) = needs[i];
 
                         if (chest && receiverChest) continue;
 
@@ -786,36 +1015,90 @@ namespace KindredLogistics.Services
                 else
                 {
                     var totalTransferred = 0;
-                    var remaining = totalAmount;
-
-                    // Fill sequentially so each station gets enough for a complete craft
+                    var remainder = 0;
+                    // Pass 1: Distribute proportionally with recipe-multiple rounding
                     for (int i = needs.Count - 1; i >= 0; i--)
                     {
-                        var (receivingInventoryEntity, wanted, receiverChest) = needs[i];
+                        var (receivingInventoryEntity, wanted, receiverChest, recipeAmount) = needs[i];
 
                         if (chest && receiverChest) continue;
                         if (wanted <= 0) continue;
 
                         if (!Core.EntityManager.Exists(receivingInventoryEntity))
                         {
+                            totalWanted -= wanted;
                             needs.RemoveAt(i);
                             continue;
                         }
 
-                        if (remaining <= 0) break;
-
-                        var transferring = System.Math.Min(wanted, remaining);
+                        var numerator = (long)wanted * totalAmount;
+                        var transferring = (int)(numerator / totalWanted);
+                        remainder += (int)(numerator % totalWanted);
+                        if (remainder >= totalWanted && transferring < wanted)
+                        {
+                            transferring++;
+                            remainder -= totalWanted;
+                        }
+                        // Round down to recipe multiples for stations
+                        if (recipeAmount > 0 && transferring < wanted)
+                            transferring = (transferring / recipeAmount) * recipeAmount;
+                        if (transferring <= 0) continue; // handled in pass 2
                         var transferred = Utilities.TransferItems(serverGameManager, inventoryEntity, receivingInventoryEntity, item, transferring);
                         totalTransferred += transferred;
-                        remaining -= transferred;
-
-                        if (transferred >= wanted)
+                        if (transferred < transferring)
                         {
                             needs.RemoveAt(i);
                         }
-                        else if (transferred > 0)
+                        else if (transferred >= wanted)
                         {
-                            needs[i] = (receivingInventoryEntity, wanted - transferred, receiverChest);
+                            needs.RemoveAt(i);
+                        }
+                        else
+                        {
+                            needs[i] = (receivingInventoryEntity, wanted - transferred, receiverChest, recipeAmount);
+                        }
+                    }
+
+                    // Pass 2: Distribute remaining to stations in recipe multiples (fair sequential)
+                    var remaining = totalAmount - totalTransferred;
+                    if (remaining > 0)
+                    {
+                        var stationsLeft = 0;
+                        for (int i = 0; i < needs.Count; i++)
+                        {
+                            if (chest && needs[i].chest) continue;
+                            if (needs[i].recipeAmount > 0 && needs[i].amount > 0)
+                                stationsLeft++;
+                        }
+
+                        for (int i = needs.Count - 1; i >= 0 && remaining > 0 && stationsLeft > 0; i--)
+                        {
+                            var (receivingInventoryEntity, wanted, receiverChest, recipeAmount) = needs[i];
+                            if (chest && receiverChest) continue;
+                            if (recipeAmount <= 0 || wanted <= 0) continue;
+                            if (remaining < recipeAmount) break;
+                            if (!Core.EntityManager.Exists(receivingInventoryEntity))
+                            {
+                                needs.RemoveAt(i);
+                                stationsLeft--;
+                                continue;
+                            }
+
+                            // Fair cap: each station gets at most its fair share, minimum 1 recipe
+                            var fairCap = (remaining / stationsLeft / recipeAmount) * recipeAmount;
+                            if (fairCap < recipeAmount) fairCap = recipeAmount;
+                            var transferring = System.Math.Min(wanted, System.Math.Min(remaining, fairCap));
+                            transferring = (transferring / recipeAmount) * recipeAmount;
+                            if (transferring <= 0) { stationsLeft--; continue; }
+
+                            var transferred = Utilities.TransferItems(serverGameManager, inventoryEntity, receivingInventoryEntity, item, transferring);
+                            totalTransferred += transferred;
+                            remaining -= transferred;
+                            stationsLeft--;
+                            if (transferred >= wanted)
+                                needs.RemoveAt(i);
+                            else
+                                needs[i] = (receivingInventoryEntity, wanted - transferred, receiverChest, recipeAmount);
                         }
                     }
 
