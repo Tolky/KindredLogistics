@@ -3,13 +3,13 @@
     <TargetFramework>net6.0</TargetFramework>
     <AssemblyName>KindredLogistics</AssemblyName>
     <Description>Inventory management mod. Stashing, craftpulling, finding chests, etc</Description>
-    <Version>1.6.0</Version>
+    <Version>2.0.0</Version>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <LangVersion>latest</LangVersion>
     <RootNamespace>KindredLogistics</RootNamespace>
-    <AssemblyVersion>1.6.0.0</AssemblyVersion>
-    <FileVersion>1.6.0.0</FileVersion>
-    <InformationalVersion>1.6.0+0.Branch.main.Sha.62bb8fcf39ee2ebe62410e48ec8f8fdc72e85b10</InformationalVersion>
+    <AssemblyVersion>2.0.0.0</AssemblyVersion>
+    <FileVersion>2.0.0.0</FileVersion>
+    <InformationalVersion>2.0.0</InformationalVersion>
   </PropertyGroup>
   <ItemGroup>
     <None Remove="Data\prefabNames.json" />
@@ -23,7 +23,8 @@
   </ItemGroup>
   <ItemGroup>
 	  <PackageReference Include="BepInEx.PluginInfoProps" Version="2.*" />
-	  <PackageReference Include="VRising.VampireCommandFramework" Version="0.10.*" />
+	  <!-- VCF NuGet unavailable, using local DLL reference -->
+	  <!-- <PackageReference Include="VRising.VampireCommandFramework" Version="0.10.*" /> -->
 	  <!-- <PackageReference Include="HookDOTS.API" Version="1.*" /> -->
   </ItemGroup>
   <ItemGroup>
@@ -33,6 +34,9 @@
 
 	<ItemGroup>
 		<Reference Include="HookDOTS.API" HintPath="HookDOTS.API.dll" />
+		<Reference Include="VampireCommandFramework">
+			<HintPath>E:\SteamLibrary\steamapps\common\VRising\BepInEx\plugins\VampireCommandFramework.dll</HintPath>
+		</Reference>
 	</ItemGroup>
 
 	<ItemGroup>
