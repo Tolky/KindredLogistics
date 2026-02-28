@@ -1,5 +1,7 @@
 using KindredLogistics;
+using KindredLogistics.Commands.Converters;
 using KindredLogistics.Services;
+using Stunlock.Core;
 using Steamworks;
 using VampireCommandFramework;
 
@@ -101,6 +103,66 @@ namespace Logistics.Commands
 
             var silentStash = Core.PlayerSettings.ToggleSilentStash(SteamID);
             ctx.Reply($"SilentStash is {(silentStash ? "<color=green>enabled</color>" : "<color=red>disabled</color>")}.");
+        }
+
+        [Command(name: "stashblacklist", shortHand: "sbl", usage: ".l sbl", description: "Toggles per-player stash blacklist. When enabled, blacklisted items are retained in inventory during .stash.")]
+        public static void ToggleStashBlacklist(ChatCommandContext ctx)
+        {
+            var SteamID = ctx.Event.User.PlatformId;
+
+            var stashBlacklist = Core.PlayerSettings.ToggleStashBlacklist(SteamID);
+            ctx.Reply($"StashBlacklist is {(stashBlacklist ? "<color=green>enabled</color>" : "<color=red>disabled</color>")}.");
+        }
+
+        [Command(name: "blacklist", shortHand: "bl", usage: ".l bl [item] [count]", description: "Set or list stash blacklist entries. Use '.l bl' to list, '.l bl <item> <count>' to set (0 to remove).")]
+        public static void Blacklist(ChatCommandContext ctx, FoundItem item = default, int count = -1)
+        {
+            var steamId = ctx.Event.User.PlatformId;
+
+            // No args: list all blacklisted items
+            if (item.prefab.GuidHash == 0)
+            {
+                var bl = Core.PlayerSettings.GetBlacklist(steamId);
+                if (bl.Count == 0)
+                {
+                    ctx.Reply("Stash blacklist is empty.");
+                    return;
+                }
+                var msg = "Stash Blacklist:";
+                foreach (var (guidHash, retainCount) in bl)
+                {
+                    var prefab = new PrefabGUID(guidHash);
+                    msg += $"\n  <color=green>{prefab.PrefabName()}</color>: keep <color=white>{retainCount}</color>";
+                }
+                ctx.Reply(msg);
+                return;
+            }
+
+            // Item provided but no count: show current entry
+            if (count == -1)
+            {
+                var bl = Core.PlayerSettings.GetBlacklist(steamId);
+                if (bl.TryGetValue(item.prefab.GuidHash, out var current))
+                    ctx.Reply($"<color=green>{item.prefab.PrefabName()}</color>: keep <color=white>{current}</color>");
+                else
+                    ctx.Reply($"<color=green>{item.prefab.PrefabName()}</color> is not blacklisted.");
+                return;
+            }
+
+            // Set entry
+            Core.PlayerSettings.SetBlacklistEntry(steamId, item.prefab.GuidHash, count);
+            if (count <= 0)
+                ctx.Reply($"Removed <color=green>{item.prefab.PrefabName()}</color> from stash blacklist.");
+            else
+                ctx.Reply($"Stash blacklist: keep <color=white>{count}</color>x <color=green>{item.prefab.PrefabName()}</color> in inventory.");
+        }
+
+        [Command(name: "blacklistclear", shortHand: "blclear", usage: ".l blclear", description: "Clears your entire stash blacklist.")]
+        public static void BlacklistClear(ChatCommandContext ctx)
+        {
+            var steamId = ctx.Event.User.PlatformId;
+            Core.PlayerSettings.ClearBlacklist(steamId);
+            ctx.Reply("Stash blacklist cleared.");
         }
 
         [Command(name: "settings", shortHand: "s", usage: ".l s", description: "Displays current settings.")]
