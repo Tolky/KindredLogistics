@@ -10,6 +10,27 @@ namespace KindredLogistics.Services
 {
     internal class RefinementStationsService
     {
+        // Per-territory dirty tracking: only rebuild caches for affected territories
+        static readonly HashSet<int> _dirtyTerritories = new();
+
+        /// <summary>Mark a single territory for cache rebuild (used on station add/remove)</summary>
+        internal static void InvalidateTerritory(int territoryId)
+        {
+            _dirtyTerritories.Add(territoryId);
+        }
+
+        /// <summary>Mark ALL territories dirty (used on rename, since we can't identify which territory)</summary>
+        internal static void InvalidateAllTerritories()
+        {
+            for (int i = TerritoryService.MIN_TERRITORY_ID; i <= TerritoryService.MAX_TERRITORY_ID; i++)
+                _dirtyTerritories.Add(i);
+        }
+
+        /// <summary>Check and consume dirty flag for a territory. Returns true if rebuild needed.</summary>
+        internal static bool ConsumeTerritoryDirty(int territoryId)
+        {
+            return _dirtyTerritories.Remove(territoryId);
+        }
 
         readonly Regex receiverRegex;
         readonly Regex senderRegex;
@@ -56,6 +77,7 @@ namespace KindredLogistics.Services
                 refinementStationsByHeart.Add(castleHeartEntity, list);
             }
             list.Add(stationEntity);
+            MarkTerritoryDirty(castleHeartEntity);
         }
 
         internal void RemoveRefinementStation(Entity stationEntity)
@@ -65,6 +87,16 @@ namespace KindredLogistics.Services
             if (!refinementStationsByHeart.TryGetValue(castleHeartEntity, out var list)) return;
 
             list.Remove(stationEntity);
+            MarkTerritoryDirty(castleHeartEntity);
+        }
+
+        static void MarkTerritoryDirty(Entity castleHeartEntity)
+        {
+            if (!Core.EntityManager.Exists(castleHeartEntity)) return;
+            var castleHeart = castleHeartEntity.Read<CastleHeart>();
+            var territoryEntity = castleHeart.CastleTerritoryEntity;
+            if (!Core.EntityManager.Exists(territoryEntity) || !territoryEntity.Has<CastleTerritory>()) return;
+            _dirtyTerritories.Add(territoryEntity.Read<CastleTerritory>().CastleTerritoryIndex);
         }
 
         public IEnumerable<(int group, Entity station)> GetAllReceivingStations(int territoryId)
