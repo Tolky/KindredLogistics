@@ -61,6 +61,89 @@ namespace KindredLogistics.Services
         internal void FlushNameCache()
         {
             _nameCache.Clear();
+            _territoryCache.Clear();
+        }
+
+        internal class TerritoryStashData
+        {
+            public readonly List<Entity> NormalStashes = new(32);
+            public readonly List<(int group, Entity stash)> ReceiverStashes = new(16);
+            public readonly List<(int group, Entity stash)> SenderStashes = new(16);
+            public readonly List<Entity> OverflowStashes = new(4);
+            public readonly List<Entity> SalvageStashes = new(4);
+            public readonly List<Entity> SpawnerStashes = new(4);
+            public readonly List<Entity> BrazierStashes = new(4);
+            public readonly List<Entity> TrashStashes = new(4);
+        }
+
+        readonly Dictionary<int, TerritoryStashData> _territoryCache = new(capacity: 32);
+
+        TerritoryStashData GetOrClassifyTerritory(int territoryId)
+        {
+            if (_territoryCache.TryGetValue(territoryId, out var cached))
+                return cached;
+
+            var data = new TerritoryStashData();
+
+            var castleHeart = Core.TerritoryService.GetCastleHeart(territoryId);
+            if (castleHeart == Entity.Null)
+            {
+                _territoryCache[territoryId] = data;
+                return data;
+            }
+
+            var sharedInventoryManager = castleHeart.Read<SharedCastleInventoryConnection>().SharedInventoryManager.GetEntityOnServer();
+            if (sharedInventoryManager == Entity.Null)
+            {
+                _territoryCache[territoryId] = data;
+                return data;
+            }
+
+            var sharedCastleInventory = Core.EntityManager.GetBuffer<SharedCastleInventories>(sharedInventoryManager);
+            for (var i = 0; i < sharedCastleInventory.Length; i++)
+            {
+                var sharedInventory = sharedCastleInventory[i];
+                var stash = sharedInventory.InventorySource;
+
+                if (!Core.EntityManager.Exists(stash)) continue;
+
+                var name = GetCachedName(stash);
+                if (name.EndsWith(SKIP_SUFFIX)) continue;
+
+                bool isOverflow = name.Contains(OVERFLOW_SUFFIX);
+                bool isSalvage = name.Contains(SALVAGE_SUFFIX);
+                bool isSpawner = name.Contains("spawner");
+                bool isBrazier = name.Contains("brazier");
+                bool isTrash = name.Contains("trash");
+
+                if (isOverflow) data.OverflowStashes.Add(stash);
+                if (isSalvage) data.SalvageStashes.Add(stash);
+                if (isSpawner) data.SpawnerStashes.Add(stash);
+                if (isBrazier) data.BrazierStashes.Add(stash);
+                if (isTrash) data.TrashStashes.Add(stash);
+
+                if (!isSalvage && !isOverflow && !name.Contains(SPOILS_SUFFIX))
+                    data.NormalStashes.Add(stash);
+
+                var stashTerritoryId = Core.TerritoryService.GetTerritoryId(stash);
+                if (stashTerritoryId == territoryId)
+                {
+                    foreach (Match match in receiverRegex.Matches(name))
+                    {
+                        var group = int.Parse(match.Groups[1].Value);
+                        if (!isOverflow)
+                            data.ReceiverStashes.Add((group, stash));
+                    }
+                    foreach (Match match in senderRegex.Matches(name))
+                    {
+                        var group = int.Parse(match.Groups[1].Value);
+                        data.SenderStashes.Add((group, stash));
+                    }
+                }
+            }
+
+            _territoryCache[territoryId] = data;
+            return data;
         }
 
         public StashService()
@@ -100,105 +183,39 @@ namespace KindredLogistics.Services
             }
         }
 
-        public IEnumerable<(int group, Entity station)> GetAllReceivingStashes(int territoryId)
+        public List<(int group, Entity stash)> GetAllReceivingStashes(int territoryId)
         {
-            foreach (var result in GetAllGroupStashes(receiverRegex, territoryId))
-            {
-                var name = result.station.Read<NameableInteractable>().Name.ToString().ToLower();
-                if (name.Contains(OVERFLOW_SUFFIX))
-                    continue;
-                yield return result;
-            }
+            return GetOrClassifyTerritory(territoryId).ReceiverStashes;
         }
 
-        public IEnumerable<(int group, Entity station)> GetAllSendingStashes(int territoryId)
+        public List<(int group, Entity stash)> GetAllSendingStashes(int territoryId)
         {
-            foreach (var result in GetAllGroupStashes(senderRegex, territoryId))
-            {
-                yield return result;
-            }
+            return GetOrClassifyTerritory(territoryId).SenderStashes;
         }
 
-        IEnumerable<(int group, Entity station)> GetAllGroupStashes(Regex groupRegex, int territoryId)
+        public List<Entity> GetAllSalvageStashes(int territoryId)
         {
-
-            var castleHeart = Core.TerritoryService.GetCastleHeart(territoryId);
-            if (castleHeart == Entity.Null) yield break;
-
-            var sharedInventoryManager = castleHeart.Read<SharedCastleInventoryConnection>().SharedInventoryManager.GetEntityOnServer();
-            if (sharedInventoryManager == Entity.Null) yield break;
-
-
-            var sharedCastleInventory = Core.EntityManager.GetBuffer<SharedCastleInventories>(sharedInventoryManager);
-            for(var i = 0; i < sharedCastleInventory.Length; i++)
-            {
-                var sharedInventory = sharedCastleInventory[i];
-                var stash = sharedInventory.InventorySource;
-
-                if (!Core.EntityManager.Exists(stash)) continue;
-
-                var stashTerritoryId = Core.TerritoryService.GetTerritoryId(stash);
-                if (stashTerritoryId != territoryId)
-                    continue;
-
-                var name = stash.Read<NameableInteractable>().Name.ToString().ToLower();
-                foreach (Match match in groupRegex.Matches(name))
-                {
-                    var group = int.Parse(match.Groups[1].Value);
-                    yield return (group, stash);
-                }
-            }
+            return GetOrClassifyTerritory(territoryId).SalvageStashes;
         }
 
-        
-        IEnumerable<Entity> GetNamedStashes(int territoryId, string nameContains)
+        public List<Entity> GetAllSpawnerStashes(int territoryId)
         {
-            var castleHeart = Core.TerritoryService.GetCastleHeart(territoryId);
-            if (castleHeart == Entity.Null) yield break;
-
-            var sharedInventoryManager = castleHeart.Read<SharedCastleInventoryConnection>().SharedInventoryManager.GetEntityOnServer();
-            if (sharedInventoryManager == Entity.Null) yield break;
-
-            nameContains = nameContains.ToLower();
-            var sharedCastleInventory = Core.EntityManager.GetBuffer<SharedCastleInventories>(sharedInventoryManager);
-            for (var i = 0; i < sharedCastleInventory.Length; i++)
-            {
-                var sharedInventory = sharedCastleInventory[i];
-                var stash = sharedInventory.InventorySource;
-
-                if (!Core.EntityManager.Exists(stash)) continue;
-
-                var name = stash.Read<NameableInteractable>().Name.ToString().ToLower();
-                if (name.EndsWith(SKIP_SUFFIX)) continue;
-                if (!name.Contains(nameContains)) continue;
-
-                yield return stash;
-            }
+            return GetOrClassifyTerritory(territoryId).SpawnerStashes;
         }
 
-        public IEnumerable<Entity> GetAllSalvageStashes(int territoryId)
+        public List<Entity> GetAllBrazierStashes(int territoryId)
         {
-            return GetNamedStashes(territoryId, "salvage");
+            return GetOrClassifyTerritory(territoryId).BrazierStashes;
         }
 
-        public IEnumerable<Entity> GetAllSpawnerStashes(int territoryId)
+        public List<Entity> GetAllOverflowStashes(int territoryId)
         {
-            return GetNamedStashes(territoryId, "spawner");
+            return GetOrClassifyTerritory(territoryId).OverflowStashes;
         }
 
-        public IEnumerable<Entity> GetAllBrazierStashes(int territoryId)
+        public List<Entity> GetAllTrashStashes(int territoryId)
         {
-            return GetNamedStashes(territoryId, "brazier");
-        }
-
-        public IEnumerable<Entity> GetAllOverflowStashes(int territoryId)
-        {
-            return GetNamedStashes(territoryId, "overflow");
-        }
-
-        public IEnumerable<Entity> GetAllTrashStashes(int territoryId)
-        {
-            return GetNamedStashes(territoryId, "trash");
+            return GetOrClassifyTerritory(territoryId).TrashStashes;
         }
 
         public void StashCharacterInventory(Entity charEntity)
@@ -266,7 +283,8 @@ namespace KindredLogistics.Services
                 var matches = new Dictionary<PrefabGUID, List<(Entity stash, Entity inventory)>>(capacity: 100);
                 var foundStash = false;
                 var alreadyAdded = new HashSet<PrefabGUID>();
-                foreach (var stash in GetStashesOnTerritory(territoryIndex))
+                var normalStashes = GetOrClassifyTerritory(territoryIndex).NormalStashes;
+                foreach (var stash in normalStashes)
                 {
                     try
                     {
@@ -276,12 +294,6 @@ namespace KindredLogistics.Services
                             continue;
                         }
                         if (!serverGameManager.TryGetBuffer<AttachedBuffer>(stash, out var buffer))
-                            continue;
-
-                        var name = stash.Read<NameableInteractable>().Name.ToString().ToLower();
-
-                        if (name.Contains(SALVAGE_SUFFIX) || name.Contains(OVERFLOW_SUFFIX)
-                            || name.Contains(SPOILS_SUFFIX))
                             continue;
 
                         foundStash = true;
@@ -332,7 +344,7 @@ namespace KindredLogistics.Services
                 HashSet<PrefabGUID> transferredItems = [];
                 Dictionary<(Entity stash, PrefabGUID item), int> amountStashed = [];
                 Dictionary<PrefabGUID, int> amountUnstashed = [];
-                var overflowStashes = GetAllOverflowStashes(territoryIndex).ToArray();
+                var overflowStashes = GetAllOverflowStashes(territoryIndex);
                 for (int i = ACTION_BAR_SLOTS; i < inventoryBuffer.Length; i++)
                 {
                     var itemEntry = inventoryBuffer[i];
@@ -667,7 +679,7 @@ namespace KindredLogistics.Services
                 HashSet<PrefabGUID> transferredItems = [];
                 Dictionary<Entity, int> amountStashed = [];
                 Dictionary<PrefabGUID, int> amountUnstashed = [];
-                var overflowStashes = GetAllOverflowStashes(territoryIndex).ToArray();
+                var overflowStashes = GetAllOverflowStashes(territoryIndex);
                             
                 foreach (var stash in matches)
                 {
