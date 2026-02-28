@@ -1,6 +1,7 @@
 ﻿using Il2CppInterop.Runtime;
 using ProjectM;
 using ProjectM.CastleBuilding;
+using ProjectM.Network;
 using ProjectM.Terrain;
 using System;
 using System.Collections;
@@ -25,6 +26,9 @@ namespace KindredLogistics.Services
         readonly HashSet<int> territoriesRebuilding = [];
 
         readonly float timeBudget;
+
+        /// <summary>PlatformId of the current territory's owner, resolved once per territory in UpdateLoop.</summary>
+        internal ulong CurrentOwnerPlatformId;
 
         public TerritoryService()
         {
@@ -109,6 +113,23 @@ namespace KindredLogistics.Services
 
                     if (territoriesRebuilding.Contains(i)) continue;
                     if (castleHeartEntity.Read<CastleRebuildPhaseState>().State != PhaseState.None) continue;
+
+                    // Resolve owner once per territory — callbacks use CurrentOwnerPlatformId
+                    var ownerEntity = castleHeartEntity.Read<UserOwner>().Owner.GetEntityOnServer();
+                    CurrentOwnerPlatformId = ownerEntity != Entity.Null ? ownerEntity.Read<User>().PlatformId : 0UL;
+
+                    // Can't resolve owner yet (not loaded) — skip but DON'T consume pending
+                    if (CurrentOwnerPlatformId == 0UL) continue;
+
+                    // Skip all callbacks if every feature is disabled for this owner
+                    if (!Core.PlayerSettings.IsConveyorEnabled(CurrentOwnerPlatformId) &&
+                        !Core.PlayerSettings.IsSalvageEnabled(CurrentOwnerPlatformId) &&
+                        !Core.PlayerSettings.IsUnitSpawnerEnabled(CurrentOwnerPlatformId) &&
+                        !Core.PlayerSettings.IsBrazierEnabled(CurrentOwnerPlatformId))
+                    {
+                        ConveyorService.ConsumePending(i);
+                        continue;
+                    }
 
                     foreach (var callback in territoryUpdateCallbacks)
                     {

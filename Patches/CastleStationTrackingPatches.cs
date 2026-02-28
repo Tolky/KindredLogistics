@@ -1,4 +1,5 @@
 ﻿using HarmonyLib;
+using KindredLogistics.Services;
 using ProjectM;
 using ProjectM.CastleBuilding;
 using Unity.Collections;
@@ -32,7 +33,16 @@ internal class CastleStationDestroySystemPatch
         foreach (var castleConnectionEntity in entities)
         {
             if (castleConnectionEntity.Has<Bonfire>()) Core.BrazierService.RemoveBrazier(castleConnectionEntity);
-            if (castleConnectionEntity.Has<Refinementstation>()) Core.RefinementStations.RemoveRefinementStation(castleConnectionEntity);
+            if (castleConnectionEntity.Has<Refinementstation>())
+            {
+                Core.RefinementStations.RemoveRefinementStation(castleConnectionEntity);
+                var territoryId = Core.TerritoryService.GetTerritoryId(castleConnectionEntity);
+                if (territoryId >= 0)
+                {
+                    RefinementStationsService.InvalidateTerritory(territoryId);
+                    ConveyorService.MarkTerritoryPending(territoryId);
+                }
+            }
             if (castleConnectionEntity.Has<Salvagestation>()) Core.SalvageService.RemoveSalvageStation(castleConnectionEntity);
             if (castleConnectionEntity.Has<UnitSpawnerstation>()) Core.UnitSpawnerstationService.RemoveUnitSpawnerStation(castleConnectionEntity);
         }
