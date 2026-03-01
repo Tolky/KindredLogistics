@@ -603,7 +603,8 @@ namespace KindredLogistics.Services
             // If any salvager is actively working, keep territory pending for re-evaluation
             for (int i = 0; i < _salvagers.Count; i++)
             {
-                if (_salvagers[i].station.IsWorking)
+                if (!Core.EntityManager.Exists(_salvagers[i].entity)) continue;
+                if (_salvagers[i].entity.Read<Salvagestation>().IsWorking)
                 {
                     _territoryHadWork.Add(territoryId);
                     break;
@@ -673,7 +674,7 @@ namespace KindredLogistics.Services
                                 continue;
                             }
 
-                            var salvageStation = salvager.station;
+                            var salvageStation = salvager.entity.Read<Salvagestation>();
                             var inputInventoryEntity = salvageStation.InputInventoryEntity.GetEntityOnServer();
                             if (inputInventoryEntity == Entity.Null)
                             {
