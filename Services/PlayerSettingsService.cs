@@ -212,7 +212,7 @@ namespace KindredLogistics.Services
         {
             if (!playerSettings.TryGetValue(playerId, out var settings))
                 settings = defaultSettings;
-            return settings.UnitSpawner;
+            return settings.UnitSpawner && playerSettings[GLOBAL_PLAYER_ID].UnitSpawner;
         }
 
         public bool ToggleUnitSpawner(ulong playerId = GLOBAL_PLAYER_ID)
@@ -229,7 +229,7 @@ namespace KindredLogistics.Services
         {
             if (!playerSettings.TryGetValue(playerId, out var settings))
                 settings = defaultSettings;
-            return settings.Brazier;
+            return settings.Brazier && playerSettings[GLOBAL_PLAYER_ID].Brazier;
         }
 
         public bool IsSolarEnabled(ulong playerId)
