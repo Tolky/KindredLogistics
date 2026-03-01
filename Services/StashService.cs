@@ -45,8 +45,10 @@ namespace KindredLogistics.Services
         readonly Dictionary<Entity, double> lastStashed = [];
         const int DEFAULT_STASH_PRIORITY = 5;
         static readonly Regex priorityRegex = new(@"(?<![A-Za-z])P(\d)(?!\d)", RegexOptions.Compiled | RegexOptions.IgnoreCase);
+        static readonly Regex reserveRegex = new(@"(?<![A-Za-z])K(\d)(?!\d)", RegexOptions.Compiled | RegexOptions.IgnoreCase);
         readonly Dictionary<Entity, string> _nameCache = new(capacity: 200);
         readonly Dictionary<Entity, int> _priorityCache = new(capacity: 200);
+        readonly Dictionary<Entity, int> _reserveCache = new(capacity: 200);
 
         internal class TerritoryStashData
         {
@@ -98,12 +100,34 @@ namespace KindredLogistics.Services
             return priority;
         }
 
+        // Returns the keep template ID (0-9) for a stash, or -1 if no K tag.
+        internal int GetReserveTemplateId(Entity stash)
+        {
+            if (_reserveCache.TryGetValue(stash, out var templateId))
+                return templateId;
 
+            var name = GetCachedName(stash);
+            var match = reserveRegex.Match(name);
+            templateId = match.Success ? int.Parse(match.Groups[1].Value) : -1;
+            _reserveCache[stash] = templateId;
+            return templateId;
+        }
+
+        // Returns the keep amount for a given item in a stash based on its K template.
+        // Returns -1 if no K tag (no keep limit).
+        internal int GetReserveAmount(Entity stash, int maxStackSize)
+        {
+            var templateId = GetReserveTemplateId(stash);
+            if (templateId < 0) return -1;
+            var multiplier = Core.PlayerSettings.GetReserveMultiplier(templateId);
+            return (int)System.Math.Ceiling(multiplier * maxStackSize);
+        }
 
         internal void FlushNameCache()
         {
             _nameCache.Clear();
             _priorityCache.Clear();
+            _reserveCache.Clear();
             _territoryCache.Clear();
         }
 
@@ -218,12 +242,25 @@ namespace KindredLogistics.Services
             if (sharedInventoryManager == Entity.Null) yield break;
 
             var sharedCastleInventory = Core.EntityManager.GetBuffer<SharedCastleInventories>(sharedInventoryManager);
-            foreach (var sharedInventory in sharedCastleInventory)
-            {
-                var name = sharedInventory.InventorySource.Read<NameableInteractable>().Name.ToString();
-                if (name.EndsWith(SKIP_SUFFIX)) continue;
 
-                yield return sharedInventory.InventorySource;
+            // First pass: yield non-K stashes
+            for (int i = 0; i < sharedCastleInventory.Length; i++)
+            {
+                var stash = sharedCastleInventory[i].InventorySource;
+                var name = GetCachedName(stash);
+                if (name.EndsWith(SKIP_SUFFIX)) continue;
+                if (GetReserveTemplateId(stash) >= 0) continue;
+                yield return stash;
+            }
+
+            // Second pass: yield K-tagged stashes last
+            for (int i = 0; i < sharedCastleInventory.Length; i++)
+            {
+                var stash = sharedCastleInventory[i].InventorySource;
+                var name = GetCachedName(stash);
+                if (name.EndsWith(SKIP_SUFFIX)) continue;
+                if (GetReserveTemplateId(stash) < 0) continue;
+                yield return stash;
             }
         }
 

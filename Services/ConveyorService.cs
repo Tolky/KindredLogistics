@@ -37,6 +37,7 @@ namespace KindredLogistics.Services
         readonly Dictionary<PrefabGUID, List<(Entity receiver, int amount)>> _unitSpawnerNeeds = new(8);
         readonly Dictionary<PrefabGUID, List<(Entity receiver, int amount)>> _brazierNeeds = new(8);
         static readonly List<Entity> _emptyOverflowList = new();
+        readonly List<int> _reserveKeys = new(64);
         // Station metadata cache: survives across runs, invalidated per-territory by dirty tracking
         readonly Dictionary<int, List<(int group, Entity station, Entity inputInv)>> _stationMetaCache = new();
         static readonly HashSet<int> _pendingTerritories = new();
@@ -521,7 +522,7 @@ namespace KindredLogistics.Services
                     if (!attachedEntity.Has<PrefabGUID>()) continue;
                     if (!attachedEntity.Read<PrefabGUID>().Equals(StashService.ExternalInventoryPrefab)) continue;
 
-                    DistributeInventory(_receivingNeeds, serverGameManager, group, attachedEntity, _emptyOverflowList, retain: dplRetain, chest: true);
+                    DistributeInventory(_receivingNeeds, serverGameManager, group, attachedEntity, _emptyOverflowList, retain: dplRetain, chest: true, reserveStash: sendingStash);
                 }
 
                 if (Core.TerritoryService.ShouldUpdateYield())
@@ -1058,7 +1059,7 @@ namespace KindredLogistics.Services
         }
 
         void DistributeInventory(Dictionary<(int group, PrefabGUID item), List<(Entity receiver, int amount, bool chest, int recipeAmount)>> receivingNeeds,
-                                 ServerGameManager serverGameManager, int group, Entity inventoryEntity, List<Entity> overflowStashes, int retain = 0, bool chest=false)
+                                 ServerGameManager serverGameManager, int group, Entity inventoryEntity, List<Entity> overflowStashes, int retain = 0, bool chest=false, Entity reserveStash = default)
         {
             amountToDistribute.Clear();
 
@@ -1073,6 +1074,31 @@ namespace KindredLogistics.Services
                 else
                     totalAmountDistribute += item.Amount;
                 amountToDistribute[item.ItemType] = totalAmountDistribute;
+            }
+
+            // K reserve: limit distributable amount from K-tagged sender stashes
+            if (reserveStash != default && Core.Stash.GetReserveTemplateId(reserveStash) >= 0)
+            {
+                var itemHashLookupMap = Core.PrefabCollectionSystem._PrefabLookupMap;
+                _reserveKeys.Clear();
+                foreach (var key in amountToDistribute.Keys)
+                    _reserveKeys.Add(key.GuidHash);
+
+                for (int ki = 0; ki < _reserveKeys.Count; ki++)
+                {
+                    var itemType = new PrefabGUID(_reserveKeys[ki]);
+                    if (!itemHashLookupMap.TryGetValue(itemType, out var prefab)) continue;
+                    var maxStack = prefab.Read<ItemData>().MaxAmount;
+                    var reserveAmount = Core.Stash.GetReserveAmount(reserveStash, maxStack);
+                    if (reserveAmount < 0) continue;
+
+                    var total = amountToDistribute[itemType] + retain;
+                    var distributable = total - reserveAmount;
+                    if (distributable <= 0)
+                        amountToDistribute.Remove(itemType);
+                    else
+                        amountToDistribute[itemType] = distributable;
+                }
             }
 
             foreach ((var item, var totalAmount) in amountToDistribute)

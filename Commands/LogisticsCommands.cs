@@ -165,6 +165,40 @@ namespace Logistics.Commands
             ctx.Reply("Stash blacklist cleared.");
         }
 
+        [Command(name: "keepstack", shortHand: "ks", usage: ".l ks [id] [multiplier]", description: "Sets the keep multiplier for a K template (0-9). Without args, shows all values.")]
+        public static void KeepStack(ChatCommandContext ctx, int templateId = -1, float multiplier = -1f)
+        {
+            if (templateId == -1)
+            {
+                // Show all keep multipliers
+                var multipliers = Core.PlayerSettings.GetAllReserveMultipliers();
+                var msg = "Keep Stack Multipliers:";
+                for (int i = 0; i <= 9; i++)
+                {
+                    var mult = Core.PlayerSettings.GetReserveMultiplier(i);
+                    msg += $"\n  K{i}: <color=white>{mult}x</color> stack";
+                }
+                ctx.Reply(msg);
+                return;
+            }
+
+            if (templateId < 0 || templateId > 9)
+            {
+                ctx.Reply("Template ID must be between <color=white>0</color> and <color=white>9</color>.");
+                return;
+            }
+
+            if (multiplier < 0)
+            {
+                var current = Core.PlayerSettings.GetReserveMultiplier(templateId);
+                ctx.Reply($"K{templateId}: <color=white>{current}x</color> stack");
+                return;
+            }
+
+            Core.PlayerSettings.SetReserveMultiplier(templateId, multiplier);
+            ctx.Reply($"K{templateId} set to <color=green>{multiplier}x</color> stack.");
+        }
+
         [Command(name: "settings", shortHand: "s", usage: ".l s", description: "Displays current settings.")]
         public static void DisplaySettings(ChatCommandContext ctx)
         {

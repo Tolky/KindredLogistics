@@ -11,6 +11,7 @@ namespace KindredLogistics.Services
         static readonly string CONFIG_PATH = Path.Combine(BepInEx.Paths.ConfigPath, MyPluginInfo.PLUGIN_NAME);
         static readonly string PLAYER_SETTINGS_PATH = Path.Combine(CONFIG_PATH, "playerSettings.json");
         static readonly string BLACKLIST_SETTINGS_PATH = Path.Combine(CONFIG_PATH, "blacklistSettings.json");
+        static readonly string RESERVE_SETTINGS_PATH = Path.Combine(CONFIG_PATH, "reserveSettings.json");
 
         static readonly JsonSerializerOptions prettyJsonOptions = new()
         {
@@ -52,6 +53,7 @@ namespace KindredLogistics.Services
         {
             LoadSettings();
             LoadBlacklistSettings();
+            LoadReserveSettings();
 
             if(!playerSettings.ContainsKey(GLOBAL_PLAYER_ID))
             {
@@ -384,6 +386,53 @@ namespace KindredLogistics.Services
         {
             blacklistSettings.Remove(playerId);
             SaveBlacklistSettings();
+        }
+
+        // Keep stack multipliers (K0-K9 templates)
+        // Key = 0-9, Value = multiplier of max stack size (e.g. 0.5 = half stack)
+        static readonly float[] DEFAULT_RESERVE_MULTIPLIERS = [0.5f, 1f, 2f, 3f, 4f, 5f, 6f, 7f, 8f, 9f];
+        Dictionary<int, float> reserveMultipliers;
+
+        void LoadReserveSettings()
+        {
+            if (!File.Exists(RESERVE_SETTINGS_PATH))
+            {
+                reserveMultipliers = new();
+                for (int i = 0; i < DEFAULT_RESERVE_MULTIPLIERS.Length; i++)
+                    reserveMultipliers[i] = DEFAULT_RESERVE_MULTIPLIERS[i];
+                SaveReserveSettings();
+                return;
+            }
+            var json = File.ReadAllText(RESERVE_SETTINGS_PATH);
+            reserveMultipliers = JsonSerializer.Deserialize<Dictionary<int, float>>(json);
+        }
+
+        void SaveReserveSettings()
+        {
+            if (!Directory.Exists(CONFIG_PATH))
+                Directory.CreateDirectory(CONFIG_PATH);
+            var json = JsonSerializer.Serialize(reserveMultipliers, prettyJsonOptions);
+            File.WriteAllText(RESERVE_SETTINGS_PATH, json);
+        }
+
+        public float GetReserveMultiplier(int templateId)
+        {
+            if (reserveMultipliers.TryGetValue(templateId, out var mult))
+                return mult;
+            if (templateId >= 0 && templateId < DEFAULT_RESERVE_MULTIPLIERS.Length)
+                return DEFAULT_RESERVE_MULTIPLIERS[templateId];
+            return 1f;
+        }
+
+        public void SetReserveMultiplier(int templateId, float multiplier)
+        {
+            reserveMultipliers[templateId] = multiplier;
+            SaveReserveSettings();
+        }
+
+        public Dictionary<int, float> GetAllReserveMultipliers()
+        {
+            return reserveMultipliers;
         }
     }
 }
