@@ -49,16 +49,28 @@ namespace KindredLogistics.Services
             _pendingTerritories.Add(territoryId);
         }
 
+        /// <summary>Consume pending flag without processing (used when all features are disabled for a territory).</summary>
+        internal static void ConsumePending(int territoryId)
+        {
+            _pendingTerritories.Remove(territoryId);
+        }
+
+        /// <summary>Check if a territory is pending processing (used by BrazierService).</summary>
+        internal static bool IsTerritoryPending(int territoryId)
+        {
+            return _pendingTerritories.Contains(territoryId);
+        }
+
         /// <summary>Lookup territory for an inventory sub-entity (External_Inventory, Refinementstation_Inventory).</summary>
         internal static int LookupInventoryTerritory(Entity inventoryEntity)
         {
             return _inventoryToTerritory.TryGetValue(inventoryEntity, out var tid) ? tid : -1;
         }
 
-        /// <summary>One-shot full scan of all territories to populate the reverse map.</summary>
-        internal static void EnsureReverseMapPopulated()
+        /// <summary>Full scan of all territories to populate the reverse map (inventory sub-entity → territoryId).</summary>
+        internal static void RefreshReverseMap()
         {
-            if (_inventoryToTerritory.Count > 0) return;
+            _inventoryToTerritory.Clear();
             var sgm = Core.ServerGameManager;
             for (int t = TerritoryService.MIN_TERRITORY_ID; t <= TerritoryService.MAX_TERRITORY_ID; t++)
             {
@@ -89,6 +101,13 @@ namespace KindredLogistics.Services
                 foreach (var (_, stash) in Core.Stash.GetAllSendingStashes(t)) RegisterStashInventories(stash);
                 foreach (var (_, stash) in Core.Stash.GetAllReceivingStashes(t)) RegisterStashInventories(stash);
             }
+        }
+
+        /// <summary>Called by InventoryChangedPatches — populates reverse map on first call if still empty.</summary>
+        internal static void EnsureReverseMapPopulated()
+        {
+            if (_inventoryToTerritory.Count > 0) return;
+            RefreshReverseMap();
             Core.Log.LogInfo($"[InvChanged] Reverse map populated: {_inventoryToTerritory.Count} inventory entities");
         }
 
@@ -212,7 +231,8 @@ namespace KindredLogistics.Services
                     // Cache recipe requirements permanently (they never change at runtime)
                     if (!_cachedRecipeReqs.TryGetValue(key, out var cachedReqs))
                     {
-                        Entity recipeEntity = Core.PrefabCollectionSystem._PrefabGuidToEntityMap[r.RecipeGuid];
+                        if (!Core.PrefabCollectionSystem._PrefabGuidToEntityMap.TryGetValue(r.RecipeGuid, out var recipeEntity))
+                            continue;
                         var reqs = recipeEntity.ReadBuffer<RecipeRequirementBuffer>();
                         cachedReqs = new (PrefabGUID, int)[reqs.Length];
                         for (int ri = 0; ri < reqs.Length; ri++)
@@ -459,6 +479,7 @@ namespace KindredLogistics.Services
             }
 
             // Next distribute from all the send stashes
+            var dplRetain = Core.PlayerSettings.IsDontPullLastEnabled(platformID) ? 1 : 0;
             foreach (var (group, sendingStash) in Core.Stash.GetAllSendingStashes(territoryId))
             {
                 if (!Core.EntityManager.Exists(sendingStash)) continue;
@@ -471,7 +492,7 @@ namespace KindredLogistics.Services
                     if (!attachedEntity.Has<PrefabGUID>()) continue;
                     if (!attachedEntity.Read<PrefabGUID>().Equals(StashService.ExternalInventoryPrefab)) continue;
 
-                    DistributeInventory(_receivingNeeds, serverGameManager, group, attachedEntity, _emptyOverflowList, retain: 1, chest: true);
+                    DistributeInventory(_receivingNeeds, serverGameManager, group, attachedEntity, _emptyOverflowList, retain: dplRetain, chest: true);
                 }
 
                 if (Core.TerritoryService.ShouldUpdateYield())
@@ -511,6 +532,7 @@ namespace KindredLogistics.Services
 
                 var salvageStation = salvager.station;
                 var outputInventoryEntity = salvageStation.OutputInventoryEntity.GetEntityOnServer();
+                if (outputInventoryEntity == Entity.Null) continue;
 
                 var inventoryBuffer = Core.EntityManager.GetBuffer<InventoryBuffer>(outputInventoryEntity).ToNativeArray(Allocator.Temp);
                 try
@@ -536,8 +558,7 @@ namespace KindredLogistics.Services
                 if (!Core.ServerGameManager.TryGetBuffer<AttachedBuffer>(salvageSupplier, out var buffer))
                     continue;
 
-                var name = Core.Stash.GetCachedName(salvageSupplier);
-                var isReceiverStash = Core.Stash.ReceiverRegex.IsMatch(name);
+                var isReceiverStash = Core.Stash.IsClassifiedAsReceiver(territoryId, salvageSupplier);
                 foreach (var attachedBuffer in buffer)
                 {
                     var salvageSupplierInventory = attachedBuffer.Entity;
@@ -594,6 +615,11 @@ namespace KindredLogistics.Services
 
                             var salvageStation = salvager.station;
                             var inputInventoryEntity = salvageStation.InputInventoryEntity.GetEntityOnServer();
+                            if (inputInventoryEntity == Entity.Null)
+                            {
+                                leftToGetTrash--;
+                                continue;
+                            }
 
                             var startInputSlot = 0;
                             var amountTransferred = 0;
@@ -681,12 +707,15 @@ namespace KindredLogistics.Services
                     inventoryBuffer = attachedEntity.ReadBuffer<InventoryBuffer>();
                 }
 
+                if (inputInventoryEntity == Entity.Null) continue;
+
                 foreach (var recipe in recipesBuffer)
                 {
                     if (!recipe.Unlocked) continue;
                     if (recipe.Disabled) continue;
 
-                    Entity recipeEntity = Core.PrefabCollectionSystem._PrefabGuidToEntityMap[recipe.RecipeGuid];
+                    if (!Core.PrefabCollectionSystem._PrefabGuidToEntityMap.TryGetValue(recipe.RecipeGuid, out var recipeEntity))
+                        continue;
                     var requirements = recipeEntity.ReadBuffer<RecipeRequirementBuffer>();
                     foreach (var requirement in requirements)
                     {
@@ -775,6 +804,8 @@ namespace KindredLogistics.Services
                     inputInventoryEntity = attachedEntity;
                     inventoryBuffer = attachedEntity.ReadBuffer<InventoryBuffer>();
                 }
+
+                if (inputInventoryEntity == Entity.Null) continue;
 
                 // Check how much is already in the inventory
                 var bonfire = brazier.Read<Bonfire>();
