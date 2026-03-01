@@ -46,9 +46,11 @@ namespace KindredLogistics.Services
         const int DEFAULT_STASH_PRIORITY = 5;
         static readonly Regex priorityRegex = new(@"(?<![A-Za-z])P(\d)(?!\d)", RegexOptions.Compiled | RegexOptions.IgnoreCase);
         static readonly Regex reserveRegex = new(@"(?<![A-Za-z])K(\d)(?!\d)", RegexOptions.Compiled | RegexOptions.IgnoreCase);
+        static readonly Regex capRegex = new(@"(?<![A-Za-z])O(\d)(?!\d)", RegexOptions.Compiled | RegexOptions.IgnoreCase);
         readonly Dictionary<Entity, string> _nameCache = new(capacity: 200);
         readonly Dictionary<Entity, int> _priorityCache = new(capacity: 200);
         readonly Dictionary<Entity, int> _reserveCache = new(capacity: 200);
+        readonly Dictionary<Entity, int> _capCache = new(capacity: 200);
 
         internal class TerritoryStashData
         {
@@ -123,11 +125,76 @@ namespace KindredLogistics.Services
             return (int)System.Math.Ceiling(multiplier * maxStackSize);
         }
 
+        // Returns the cap template ID (0-9) for a stash, or -1 if no O tag.
+        internal int GetCapTemplateId(Entity stash)
+        {
+            if (_capCache.TryGetValue(stash, out var templateId))
+                return templateId;
+
+            var name = GetCachedName(stash);
+            var match = capRegex.Match(name);
+            templateId = match.Success ? int.Parse(match.Groups[1].Value) : -1;
+            _capCache[stash] = templateId;
+            return templateId;
+        }
+
+        // Returns the cap amount for a given item in a stash based on its O template.
+        // Returns -1 if no O tag (no cap). Uses Floor so partial last stacks are not counted.
+        internal int GetCapAmount(Entity stash, int maxStackSize)
+        {
+            var templateId = GetCapTemplateId(stash);
+            if (templateId < 0) return -1;
+            var multiplier = Core.PlayerSettings.GetReserveMultiplier(templateId);
+            return (int)System.Math.Floor(multiplier * maxStackSize);
+        }
+
+        // Clamps a proposed deposit amount to respect an O-cap on the destination stash.
+        // Returns the allowed amount (0 = nothing allowed, -1 = no cap / unlimited).
+        // For stackable items: if the allowed remainder would create a new incomplete stack,
+        // trim to only fill existing partial stacks + complete new stacks.
+        internal int ClampForCap(Entity stash, Entity inventoryEntity, PrefabGUID item, int maxStackSize, int proposedAmount)
+        {
+            var capAmount = GetCapAmount(stash, maxStackSize);
+            if (capAmount < 0) return proposedAmount; // no cap
+
+            // Count current amount of this item in the stash inventory
+            var currentAmount = Core.ServerGameManager.GetInventoryItemCount(inventoryEntity, item);
+            var capRemaining = capAmount - currentAmount;
+            if (capRemaining <= 0) return 0;
+
+            var allowed = System.Math.Min(proposedAmount, capRemaining);
+
+            // Partial-stack rule: don't create incomplete new stacks.
+            // Find how much partial space exists in existing stacks of this item.
+            if (maxStackSize > 1 && allowed > 0)
+            {
+                var partialSpace = 0;
+                var invBuffer = inventoryEntity.ReadBuffer<InventoryBuffer>();
+                for (int s = 0; s < invBuffer.Length; s++)
+                {
+                    if (invBuffer[s].ItemType.GuidHash == item.GuidHash && invBuffer[s].Amount < maxStackSize)
+                        partialSpace += maxStackSize - invBuffer[s].Amount;
+                }
+
+                // How much would go into new stacks after filling partials?
+                var afterPartials = allowed - partialSpace;
+                if (afterPartials > 0)
+                {
+                    // Only allow complete new stacks beyond partial fills
+                    var completeNewStacks = afterPartials / maxStackSize;
+                    allowed = partialSpace + completeNewStacks * maxStackSize;
+                }
+            }
+
+            return System.Math.Max(allowed, 0);
+        }
+
         internal void FlushNameCache()
         {
             _nameCache.Clear();
             _priorityCache.Clear();
             _reserveCache.Clear();
+            _capCache.Clear();
             _territoryCache.Clear();
         }
 
@@ -480,6 +547,19 @@ namespace KindredLogistics.Services
                             {
                                 try
                                 {
+                                    // O cap: check if this stash has reached its cap for this item
+                                    if (GetCapTemplateId(stashEntry.stash) >= 0 &&
+                                        Core.PrefabCollectionSystem._PrefabLookupMap.TryGetValue(item, out var capPrefab))
+                                    {
+                                        var maxStack = capPrefab.Read<ItemData>().MaxAmount;
+                                        var capAmt = GetCapAmount(stashEntry.stash, maxStack);
+                                        if (capAmt >= 0)
+                                        {
+                                            var currentCount = Core.ServerGameManager.GetInventoryItemCount(stashEntry.inventory, item);
+                                            if (currentCount >= capAmt) continue;
+                                        }
+                                    }
+
                                     var stashInventoryBuffer = stashEntry.inventory.ReadBuffer<InventoryBuffer>();
 
                                     for (int j = 0; j < stashInventoryBuffer.Length; j++)
@@ -595,9 +675,25 @@ namespace KindredLogistics.Services
                             {
                                 try
                                 {
+                                    // O cap: clamp deposit amount, track excess for next stash
+                                    var capExcess = 0;
+                                    if (GetCapTemplateId(stashEntry.stash) >= 0 &&
+                                        Core.PrefabCollectionSystem._PrefabLookupMap.TryGetValue(item, out var capPrefab2))
+                                    {
+                                        var maxStack = capPrefab2.Read<ItemData>().MaxAmount;
+                                        var clamped = ClampForCap(stashEntry.stash, stashEntry.inventory, item, maxStack, itemEntry.Amount);
+                                        if (clamped <= 0) continue;
+                                        capExcess = itemEntry.Amount - clamped;
+                                        itemEntry.Amount = clamped;
+                                    }
+
                                     var addItemResponse = InventoryUtilitiesServer.TryAddItem(addItemSettings, stashEntry.inventory, itemEntry);
 
-                                    if (!addItemResponse.Success) continue;
+                                    if (!addItemResponse.Success)
+                                    {
+                                        itemEntry.Amount += capExcess;
+                                        continue;
+                                    }
 
                                     transferredItems.Add(item);
                                     var transferredAmount = itemEntry.Amount - addItemResponse.RemainingAmount;
@@ -606,8 +702,8 @@ namespace KindredLogistics.Services
                                     else
                                         amountStashed[(stashEntry.stash, item)] = transferredAmount;
 
-                                    itemEntry.Amount = addItemResponse.RemainingAmount;
-                                    if (!addItemResponse.ItemsRemaining)
+                                    itemEntry.Amount = addItemResponse.RemainingAmount + capExcess;
+                                    if (!addItemResponse.ItemsRemaining && capExcess <= 0)
                                     {
                                         if (retainInSlot > 0)
                                         {

@@ -21,10 +21,10 @@ namespace KindredLogistics
             StashInventoryEntity(servant, inventory, StashService.SPOILS_SUFFIX);
         }
 
-        public static Dictionary<PrefabGUID, List<Entity>> GetItemStashesOnTerritory(int territoryId)
+        public static Dictionary<PrefabGUID, List<(Entity stash, Entity inventory)>> GetItemStashesOnTerritory(int territoryId)
         {
             var serverGameManager = Core.ServerGameManager;
-            var matches = new Dictionary<PrefabGUID, List<Entity>>(capacity: 100);
+            var matches = new Dictionary<PrefabGUID, List<(Entity stash, Entity inventory)>>(capacity: 100);
             var alreadyAdded = new HashSet<PrefabGUID>(capacity: 32);
             foreach (Entity stash in Core.Stash.GetStashesOnTerritory(territoryId))
             {
@@ -49,7 +49,7 @@ namespace KindredLogistics
                             itemMatches = [];
                             matches[item] = itemMatches;
                         }
-                        itemMatches.Add(attachedEntity);
+                        itemMatches.Add((stash, attachedEntity));
                         alreadyAdded.Add(item);
                     }
                 }
@@ -58,7 +58,7 @@ namespace KindredLogistics
             return matches;
         }
 
-        public static void StashInventoryEntity(Entity inventory, Dictionary<PrefabGUID, List<Entity>> itemInventories, List<Entity> overflows)
+        public static void StashInventoryEntity(Entity inventory, Dictionary<PrefabGUID, List<(Entity stash, Entity inventory)>> itemInventories, List<Entity> overflows)
         {
             var serverGameManager = Core.ServerGameManager;
             if (!serverGameManager.TryGetBuffer<InventoryBuffer>(inventory, out var inventoryBuffer))
@@ -76,22 +76,36 @@ namespace KindredLogistics
                     {
                         var stashEntry = stashEntries[j];
 
-                        if (!Core.EntityManager.Exists(stashEntry))
+                        if (!Core.EntityManager.Exists(stashEntry.inventory))
                         {
                             stashEntries.RemoveAt(j);
                             continue;
                         }
 
+                        // O cap: clamp the amount we can deposit
+                        var effectiveAmount = amountToTransfer;
+                        if (Core.Stash.GetCapTemplateId(stashEntry.stash) >= 0 &&
+                            Core.PrefabCollectionSystem._PrefabLookupMap.TryGetValue(item, out var capPrefab))
+                        {
+                            var maxStack = capPrefab.Read<ItemData>().MaxAmount;
+                            effectiveAmount = Core.Stash.ClampForCap(stashEntry.stash, stashEntry.inventory, item, maxStack, amountToTransfer);
+                            if (effectiveAmount <= 0)
+                            {
+                                stashEntries.RemoveAt(j);
+                                continue;
+                            }
+                        }
+
                         int transferred;
                         if (isItemEntity)
-                            TransferItemEntities(inventory, stashEntry, item, amountToTransfer, ref i, out transferred);
+                            TransferItemEntities(inventory, stashEntry.inventory, item, effectiveAmount, ref i, out transferred);
                         else
-                            transferred = TransferItems(serverGameManager, inventory, stashEntry, item, amountToTransfer);
+                            transferred = TransferItems(serverGameManager, inventory, stashEntry.inventory, item, effectiveAmount);
                         amountToTransfer -= transferred;
 
                         if (amountToTransfer > 0)
                         {
-                            // This inventory is now full
+                            // This inventory is now full or at cap
                             stashEntries.RemoveAt(j);
                         }
                         else break;
@@ -191,7 +205,16 @@ namespace KindredLogistics
                     {
                         foreach (var stashEntry in stashEntries) // if match stash first, then spoils if no room
                         {
-                            amountToTransfer -= TransferItems(serverGameManager, inventory, stashEntry.inventory, item, amountToTransfer); // returns amount transferred
+                            // O cap: clamp deposit amount
+                            var effectiveAmount = amountToTransfer;
+                            if (Core.Stash.GetCapTemplateId(stashEntry.stash) >= 0 &&
+                                Core.PrefabCollectionSystem._PrefabLookupMap.TryGetValue(item, out var capPrefab))
+                            {
+                                var maxStack = capPrefab.Read<ItemData>().MaxAmount;
+                                effectiveAmount = Core.Stash.ClampForCap(stashEntry.stash, stashEntry.inventory, item, maxStack, amountToTransfer);
+                                if (effectiveAmount <= 0) continue;
+                            }
+                            amountToTransfer -= TransferItems(serverGameManager, inventory, stashEntry.inventory, item, effectiveAmount);
                             if (amountToTransfer <= 0) break;
                         }
                     }

@@ -438,10 +438,13 @@ namespace KindredLogistics.Services
 
             // Determine what is desired by each receiving stash
             _alreadyAdded.Clear();
+            var itemHashLookupMap = Core.PrefabCollectionSystem._PrefabLookupMap;
             foreach (var (group, stash) in Core.Stash.GetAllReceivingStashes(territoryId))
             {
                 if (!serverGameManager.TryGetBuffer<AttachedBuffer>(stash, out var buffer))
                     continue;
+
+                var capTemplateId = Core.Stash.GetCapTemplateId(stash);
 
                 foreach (var attachedBuffer in buffer)
                 {
@@ -459,13 +462,23 @@ namespace KindredLogistics.Services
                         if (_alreadyAdded.Contains(item.ItemType)) continue;
                         _alreadyAdded.Add(item.ItemType);
 
+                        // O cap: compute remaining capacity for this item
+                        var needAmount = -1; // unlimited by default
+                        if (capTemplateId >= 0 && itemHashLookupMap.TryGetValue(item.ItemType, out var capPrefab))
+                        {
+                            var maxStack = capPrefab.Read<ItemData>().MaxAmount;
+                            var capRemaining = Core.Stash.ClampForCap(stash, attachedEntity, item.ItemType, maxStack, int.MaxValue);
+                            if (capRemaining <= 0) continue; // at or over cap, skip
+                            needAmount = capRemaining;
+                        }
+
                         if (!_receivingNeeds.TryGetValue((group, item.ItemType), out var needs))
                         {
                             needs = [];
                             _receivingNeeds[(group, item.ItemType)] = needs;
                         }
 
-                        needs.Add((attachedEntity, -1, true, 0));
+                        needs.Add((attachedEntity, needAmount, true, 0));
                     }
                 }
             }
