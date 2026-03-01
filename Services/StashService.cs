@@ -300,35 +300,43 @@ namespace KindredLogistics.Services
                 yield return stash;
         }
 
-        public IEnumerable<Entity> GetStashesOnTerritory(int territoryIndex)
+        readonly List<Entity> _stashesOnTerritoryResult = new(64);
+
+        public List<Entity> GetStashesOnTerritory(int territoryIndex)
         {
+            _stashesOnTerritoryResult.Clear();
+
             var castleHeart = Core.TerritoryService.GetCastleHeart(territoryIndex);
-            if (castleHeart == Entity.Null) yield break;
+            if (castleHeart == Entity.Null) return _stashesOnTerritoryResult;
 
             var sharedInventoryManager = castleHeart.Read<SharedCastleInventoryConnection>().SharedInventoryManager.GetEntityOnServer();
-            if (sharedInventoryManager == Entity.Null) yield break;
+            if (sharedInventoryManager == Entity.Null) return _stashesOnTerritoryResult;
 
             var sharedCastleInventory = Core.EntityManager.GetBuffer<SharedCastleInventories>(sharedInventoryManager);
 
-            // First pass: yield non-K stashes
+            // First pass: non-K stashes (normal priority)
             for (int i = 0; i < sharedCastleInventory.Length; i++)
             {
                 var stash = sharedCastleInventory[i].InventorySource;
+                if (!Core.EntityManager.Exists(stash)) continue;
                 var name = GetCachedName(stash);
                 if (name.EndsWith(SKIP_SUFFIX)) continue;
                 if (GetReserveTemplateId(stash) >= 0) continue;
-                yield return stash;
+                _stashesOnTerritoryResult.Add(stash);
             }
 
-            // Second pass: yield K-tagged stashes last
+            // Second pass: K-tagged stashes last (deprioritized for pulls)
             for (int i = 0; i < sharedCastleInventory.Length; i++)
             {
                 var stash = sharedCastleInventory[i].InventorySource;
+                if (!Core.EntityManager.Exists(stash)) continue;
                 var name = GetCachedName(stash);
                 if (name.EndsWith(SKIP_SUFFIX)) continue;
                 if (GetReserveTemplateId(stash) < 0) continue;
-                yield return stash;
+                _stashesOnTerritoryResult.Add(stash);
             }
+
+            return _stashesOnTerritoryResult;
         }
 
         public List<(int group, Entity stash)> GetAllReceivingStashes(int territoryId)
