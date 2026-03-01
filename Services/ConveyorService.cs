@@ -38,7 +38,7 @@ namespace KindredLogistics.Services
         readonly Dictionary<PrefabGUID, List<(Entity receiver, int amount)>> _brazierNeeds = new(8);
         static readonly List<Entity> _emptyOverflowList = new();
         // Station metadata cache: survives across runs, invalidated per-territory by dirty tracking
-        readonly Dictionary<int, List<(int group, Entity station, Entity inputInv, float matchFloor)>> _stationMetaCache = new();
+        readonly Dictionary<int, List<(int group, Entity station, Entity inputInv)>> _stationMetaCache = new();
         static readonly HashSet<int> _pendingTerritories = new();
         // Reverse map: inventory sub-entity → territoryId (populated during ProcessConveyors runs)
         static readonly Dictionary<Entity, int> _inventoryToTerritory = new();
@@ -164,16 +164,14 @@ namespace KindredLogistics.Services
                 {
                     var st = gs.station;
                     var refStation = st.Read<Refinementstation>();
-                    var castleWs = st.Read<CastleWorkstation>();
                     var inputInv = refStation.InputInventoryEntity.GetEntityOnServer();
-                    var matchFloor = castleWs.WorkstationLevel.HasFlag(WorkstationLevel.MatchingFloor) ? 0.75f : 1f;
-                    stationMeta.Add((gs.group, st, inputInv, matchFloor));
+                    stationMeta.Add((gs.group, st, inputInv));
                 }
                 _stationMetaCache[territoryId] = stationMeta;
             }
 
             // Register station input inventories in reverse map for event-driven lookup
-            foreach (var (_, _, inputInv, _) in stationMeta)
+            foreach (var (_, _, inputInv) in stationMeta)
                 _inventoryToTerritory[inputInv] = territoryId;
             // Also register output inventories + sending station outputs
             foreach (var (_, sendingStation) in Core.RefinementStations.GetAllSendingStations(territoryId))
@@ -214,12 +212,13 @@ namespace KindredLogistics.Services
             _inventorySlots.Clear();
             for (int smi = stationMeta.Count - 1; smi >= 0; smi--)
             {
-                var (group, st, inputInv, matchFloor) = stationMeta[smi];
+                var (group, st, inputInv) = stationMeta[smi];
                 if (!Core.EntityManager.Exists(st))
                 {
                     stationMeta.RemoveAt(smi);
                     continue;
                 }
+                var matchFloor = st.Read<CastleWorkstation>().WorkstationLevel.HasFlag(WorkstationLevel.MatchingFloor) ? 0.75f : 1f;
 
                 var recipeStart = _activeRecipeHashes.Count;
                 var recipesBuffer = st.ReadBuffer<RefinementstationRecipesBuffer>();
