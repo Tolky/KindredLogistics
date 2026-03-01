@@ -811,6 +811,8 @@ namespace KindredLogistics.Services
                     }
                 }
 
+                lastStashed[charEntity] = Core.ServerTime;
+
                 if (amountStashed.Count > 0)
                 {
                     Utilities.SendSystemMessageToClient(Core.EntityManager, user, "Stashed items from your inventory to the current territory!");
