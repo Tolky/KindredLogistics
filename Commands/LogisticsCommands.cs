@@ -177,13 +177,14 @@ namespace Logistics.Commands
                       $"Pull (Global) : {(globalSettings.Pull ? "<color=green>Server On</color>" : "<color=red>Server Off</color>")}\n" +
                       $"CraftPull: {(globalSettings.CraftPull ? (settings.CraftPull ? "<color=green>On</color>" : "<color=red>Off</color>") : "<color=red>Server Off</color>")}\n" +
                       $"DontPullLast: {(settings.DontPullLast ? "<color=green>On</color>" : "<color=red>Off</color>")}\n" +
-                      $"AutoStashMissions: {(globalSettings.AutoStashMissions ? (settings.AutoStashMissions ? "<color=green>On</color>" : "<color=red>Off</color>") : "<color=red>Server Off</color>")}\n" +
+                      $"AutoStashMissions: {(globalSettings.AutoStashMissions ? (settings.AutoStashMissions ? "<color=green>On</color>" : "<color=red>Off</color>") : "<color=red>Server Off</color>")}");
+            ctx.Reply(
                       $"Conveyor: {(globalSettings.Conveyor ? (settings.Conveyor ? "<color=green>On</color>" : "<color=red>Off</color>") : "<color=red>Server Off</color>")}\n" +
                       $"Salvage: {(globalSettings.Salvage ? (settings.Salvage ? "<color=green>On</color>" : "<color=red>Off</color>") : "<color=red>Server Off</color>")}\n" +
                       $"UnitSpawner: {(globalSettings.UnitSpawner ? (settings.UnitSpawner ? "<color=green>On</color>" : "<color=red>Off</color>") : "<color=red>Server Off</color>")}\n" +
                       $"Brazier: {(globalSettings.Brazier ? (settings.Brazier ? "<color=green>On</color>" : "<color=red>Off</color>") : "<color=red>Server Off</color>")}" + $" | Named: {(globalSettings.Named ? "<color=green>Server On</color>" : "<color=red>Server Off</color>")}\n" +
-                      $"Silent (Pull: {(settings.SilentPull ? "<color=green>On</color>" : "<color=red>Off</color>")}" + $" | Stash: {(settings.SilentStash ? "<color=green>On</color>" : "<color=red>Off</color>")})"
-                      );
+                      $"Silent (Pull: {(settings.SilentPull ? "<color=green>On</color>" : "<color=red>Off</color>")}" + $" | Stash: {(settings.SilentStash ? "<color=green>On</color>" : "<color=red>Off</color>")})\n" +
+                      $"StashBL: {(settings.StashBlacklist ? "<color=green>On</color>" : "<color=red>Off</color>")}");
         }
 
     }
