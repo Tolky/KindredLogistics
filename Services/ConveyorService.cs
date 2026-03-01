@@ -42,6 +42,9 @@ namespace KindredLogistics.Services
         static readonly HashSet<int> _pendingTerritories = new();
         // Reverse map: inventory sub-entity → territoryId (populated during ProcessConveyors runs)
         static readonly Dictionary<Entity, int> _inventoryToTerritory = new();
+        // Territories where callbacks did active work — kept pending for re-evaluation
+        // (machine crafting completion events may not fire when player is distant)
+        static readonly HashSet<int> _territoryHadWork = new();
 
         /// <summary>Called by InventoryChangedPatches to mark a territory for immediate processing.</summary>
         internal static void MarkTerritoryPending(int territoryId)
@@ -113,44 +116,35 @@ namespace KindredLogistics.Services
 
         public ConveyorService()
         {
-            // Mark all territories for initial processing on startup
-            for (int t = TerritoryService.MIN_TERRITORY_ID; t <= TerritoryService.MAX_TERRITORY_ID; t++)
-                _pendingTerritories.Add(t);
-
-            // Second wave after a delay — catches territories whose stations weren't loaded yet
-            Core.StartCoroutine(DelayedStartupPending());
-
             Core.TerritoryService.RegisterTerritoryUpdateCallback(ProcessConveyors);
             Core.TerritoryService.RegisterTerritoryUpdateCallback(ProcessSalvagers);
             Core.TerritoryService.RegisterTerritoryUpdateCallback(ProcessUnitSpawners);
             Core.TerritoryService.RegisterTerritoryUpdateCallback(ProcessBraziers);
+            Core.TerritoryService.RegisterTerritoryUpdateCallback(ConsumePendingTerritory);
+
+            // Mark all territories pending at startup so conveyors run immediately
+            for (int t = TerritoryService.MIN_TERRITORY_ID; t <= TerritoryService.MAX_TERRITORY_ID; t++)
+                MarkTerritoryPending(t);
         }
 
-        static IEnumerator DelayedStartupPending()
+        IEnumerator ConsumePendingTerritory(int territoryId, Entity castleHeartEntity)
         {
-            for (int i = 0; i < 150; i++)
-                yield return null;
-
-            for (int t = TerritoryService.MIN_TERRITORY_ID; t <= TerritoryService.MAX_TERRITORY_ID; t++)
-                _pendingTerritories.Add(t);
+            if (!_territoryHadWork.Remove(territoryId))
+                _pendingTerritories.Remove(territoryId);
+            return EmptyEnumerator.Instance;
         }
 
         IEnumerator ProcessConveyors(int territoryId, Entity castleHeartEntity)
         {
-            if (!_pendingTerritories.Remove(territoryId))
+            if (!_pendingTerritories.Contains(territoryId))
                 return EmptyEnumerator.Instance;
-            if (!Core.PlayerSettings.IsConveyorEnabled(0)) return EmptyEnumerator.Instance;
-            var userOwner = castleHeartEntity.Read<UserOwner>();
-            if (userOwner.Owner.GetEntityOnServer() == Entity.Null) return EmptyEnumerator.Instance;
-            var platformID = userOwner.Owner.GetEntityOnServer().Read<User>().PlatformId;
-            if (!Core.PlayerSettings.IsConveyorEnabled(platformID)) return EmptyEnumerator.Instance;
+            if (!Core.PlayerSettings.IsConveyorEnabled(Core.TerritoryService.CurrentOwnerPlatformId)) return EmptyEnumerator.Instance;
             return ProcessConveyorsImpl(territoryId, castleHeartEntity);
         }
 
         IEnumerator ProcessConveyorsImpl(int territoryId, Entity castleHeartEntity)
         {
-            var userOwner = castleHeartEntity.Read<UserOwner>();
-            var platformID = userOwner.Owner.GetEntityOnServer().Read<User>().PlatformId;
+            var platformID = Core.TerritoryService.CurrentOwnerPlatformId;
 
             var serverGameManager = Core.ServerGameManager;
 
@@ -444,6 +438,9 @@ namespace KindredLogistics.Services
 
             if (_receivingNeeds.Count == 0) yield break;
 
+            // Keep territory pending — machines will craft and need output moved / re-stocking
+            _territoryHadWork.Add(territoryId);
+
             Dictionary<PrefabGUID, List<List<(Entity receiver, int amount, bool chest, int recipeAmount)>>> ungroupedItemLookup = null;
             // First distribute from overflow stashes
             var overflowStashes = Core.Stash.GetAllOverflowStashes(territoryId);
@@ -507,11 +504,8 @@ namespace KindredLogistics.Services
 
         IEnumerator ProcessSalvagers(int territoryId, Entity castleHeartEntity)
         {
-            if (!Core.PlayerSettings.IsSalvageEnabled(0)) return EmptyEnumerator.Instance;
-            var userOwner = castleHeartEntity.Read<UserOwner>();
-            if (userOwner.Owner.GetEntityOnServer() == Entity.Null) return EmptyEnumerator.Instance;
-            var platformID = userOwner.Owner.GetEntityOnServer().Read<User>().PlatformId;
-            if (!Core.PlayerSettings.IsSalvageEnabled(platformID)) return EmptyEnumerator.Instance;
+            if (!_pendingTerritories.Contains(territoryId)) return EmptyEnumerator.Instance;
+            if (!Core.PlayerSettings.IsSalvageEnabled(Core.TerritoryService.CurrentOwnerPlatformId)) return EmptyEnumerator.Instance;
             return ProcessSalvagersImpl(territoryId, castleHeartEntity);
         }
 
@@ -547,6 +541,16 @@ namespace KindredLogistics.Services
 
                 if (Core.TerritoryService.ShouldUpdateYield())
                     yield return null;
+            }
+
+            // If any salvager is actively working, keep territory pending for re-evaluation
+            for (int i = 0; i < _salvagers.Count; i++)
+            {
+                if (_salvagers[i].station.IsWorking)
+                {
+                    _territoryHadWork.Add(territoryId);
+                    break;
+                }
             }
 
             // Now fill all the salvagers
@@ -671,11 +675,8 @@ namespace KindredLogistics.Services
 
         IEnumerator ProcessUnitSpawners(int territoryId, Entity castleHeartEntity)
         {
-            if (!Core.PlayerSettings.IsUnitSpawnerEnabled(0)) return EmptyEnumerator.Instance;
-            var userOwner = castleHeartEntity.Read<UserOwner>();
-            if (userOwner.Owner.GetEntityOnServer() == Entity.Null) return EmptyEnumerator.Instance;
-            var platformID = userOwner.Owner.GetEntityOnServer().Read<User>().PlatformId;
-            if (!Core.PlayerSettings.IsUnitSpawnerEnabled(platformID)) return EmptyEnumerator.Instance;
+            if (!_pendingTerritories.Contains(territoryId)) return EmptyEnumerator.Instance;
+            if (!Core.PlayerSettings.IsUnitSpawnerEnabled(Core.TerritoryService.CurrentOwnerPlatformId)) return EmptyEnumerator.Instance;
             return ProcessUnitSpawnersImpl(territoryId, castleHeartEntity);
         }
 
@@ -768,11 +769,8 @@ namespace KindredLogistics.Services
 
         IEnumerator ProcessBraziers(int territoryId, Entity castleHeartEntity)
         {
-            if (!Core.PlayerSettings.IsBrazierEnabled(0)) return EmptyEnumerator.Instance;
-            var userOwner = castleHeartEntity.Read<UserOwner>();
-            if (userOwner.Owner.GetEntityOnServer() == Entity.Null) return EmptyEnumerator.Instance;
-            var platformID = userOwner.Owner.GetEntityOnServer().Read<User>().PlatformId;
-            if (!Core.PlayerSettings.IsBrazierEnabled(platformID)) return EmptyEnumerator.Instance;
+            if (!_pendingTerritories.Contains(territoryId)) return EmptyEnumerator.Instance;
+            if (!Core.PlayerSettings.IsBrazierEnabled(Core.TerritoryService.CurrentOwnerPlatformId)) return EmptyEnumerator.Instance;
             return ProcessBraziersImpl(territoryId, castleHeartEntity);
         }
 
