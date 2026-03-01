@@ -117,13 +117,10 @@ namespace KindredLogistics
 
                 if (amountToTransfer <= 0) continue;
 
-                ItemData itemData = default;
-                if (overflows.Count > 0 &&
-                    Core.PrefabCollectionSystem._PrefabLookupMap.TryGetValue(item, out var prefab))
-                {
-                    itemData = prefab.Read<ItemData>();
-                }
-
+                if (overflows.Count == 0) continue;
+                if (!Core.PrefabCollectionSystem._PrefabLookupMap.TryGetValue(item, out var prefab))
+                    continue;
+                var itemData = prefab.Read<ItemData>();
 
                 foreach (var overflow in overflows)
                 {
@@ -206,6 +203,8 @@ namespace KindredLogistics
                 for (var i = 0; i < inventoryBuffer.Length; i++)
                 {
                     var item = inventoryBuffer[i].ItemType;
+                    if (item.GuidHash == 0) continue;
+                    var isItemEntity = !inventoryBuffer[i].ItemEntity.Equals(NetworkedEntity.Empty);
                     var amountToTransfer = serverGameManager.GetInventoryItemCount(inventory, item);
                     if (matches.TryGetValue(item, out var stashEntries)) // if no match straight to spoils
                     {
@@ -220,16 +219,30 @@ namespace KindredLogistics
                                 effectiveAmount = Core.Stash.ClampForCap(stashEntry.stash, stashEntry.inventory, item, maxStack, amountToTransfer);
                                 if (effectiveAmount <= 0) continue;
                             }
-                            amountToTransfer -= TransferItems(serverGameManager, inventory, stashEntry.inventory, item, effectiveAmount);
+
+                            int transferred;
+                            if (isItemEntity)
+                            {
+                                var destSlot = 0;
+                                TransferItemEntities(inventory, stashEntry.inventory, item, effectiveAmount, ref destSlot, out transferred);
+                            }
+                            else
+                                transferred = TransferItems(serverGameManager, inventory, stashEntry.inventory, item, effectiveAmount);
+                            amountToTransfer -= transferred;
                             if (amountToTransfer <= 0) break;
                         }
                     }
 
                     if (amountToTransfer > 0 && !overflowStash.stash.Equals(Entity.Null)) // send remaining to spoils
                     {
-                        //Core.Log.LogInfo($"Transferred {amountTransferred} to matching stash with {remaining} left for spoils...");
-                        var remainingAmountTransferred = TransferItems(serverGameManager, inventory, overflowStash.inventory, item, amountToTransfer);
-                        //Core.Log.LogInfo($"Transferred {remainingAmountTransferred} to spoils. Remaining in inventory: {serverGameManager.GetInventoryItemCount(inventory, item)}");
+                        int overflowTransferred;
+                        if (isItemEntity)
+                        {
+                            var destSlot = 0;
+                            TransferItemEntities(inventory, overflowStash.inventory, item, amountToTransfer, ref destSlot, out overflowTransferred);
+                        }
+                        else
+                            overflowTransferred = TransferItems(serverGameManager, inventory, overflowStash.inventory, item, amountToTransfer);
                     }
 
                 }
