@@ -43,6 +43,8 @@ namespace KindredLogistics.Services
         static readonly HashSet<int> _pendingTerritories = new();
         // Reverse map: inventory sub-entity → territoryId (populated during ProcessConveyors runs)
         static readonly Dictionary<Entity, int> _inventoryToTerritory = new();
+        static bool _reverseMapInitialized;
+        readonly List<Entity> _reverseMapKeysToRemove = new(64);
         // Territories where callbacks did active work — kept pending for re-evaluation
         // (machine crafting completion events may not fire when player is distant)
         static readonly HashSet<int> _territoryHadWork = new();
@@ -74,6 +76,7 @@ namespace KindredLogistics.Services
         /// <summary>Full scan of all territories to populate the reverse map (inventory sub-entity → territoryId).</summary>
         internal static void RefreshReverseMap()
         {
+            _reverseMapInitialized = true;
             _inventoryToTerritory.Clear();
             var sgm = Core.ServerGameManager;
             for (int t = TerritoryService.MIN_TERRITORY_ID; t <= TerritoryService.MAX_TERRITORY_ID; t++)
@@ -120,7 +123,7 @@ namespace KindredLogistics.Services
         /// <summary>Called by InventoryChangedPatches — populates reverse map on first call if still empty.</summary>
         internal static void EnsureReverseMapPopulated()
         {
-            if (_inventoryToTerritory.Count > 0) return;
+            if (_reverseMapInitialized) return;
             RefreshReverseMap();
             Core.Log.LogInfo($"[InvChanged] Reverse map populated: {_inventoryToTerritory.Count} inventory entities");
         }
@@ -179,6 +182,13 @@ namespace KindredLogistics.Services
             // Register reverse map entries only when cache was rebuilt (structural change)
             if (cacheRebuilt)
             {
+                // Prune stale entries for this territory before re-adding
+                _reverseMapKeysToRemove.Clear();
+                foreach (var (entity, tid) in _inventoryToTerritory)
+                    if (tid == territoryId) _reverseMapKeysToRemove.Add(entity);
+                foreach (var key in _reverseMapKeysToRemove)
+                    _inventoryToTerritory.Remove(key);
+
                 // Register station input inventories in reverse map for event-driven lookup
                 foreach (var (_, _, inputInv) in stationMeta)
                     _inventoryToTerritory[inputInv] = territoryId;
