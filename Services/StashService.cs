@@ -376,11 +376,36 @@ namespace KindredLogistics.Services
                 Dictionary<(Entity stash, PrefabGUID item), int> amountStashed = [];
                 Dictionary<PrefabGUID, int> amountUnstashed = [];
                 var overflowStashes = GetAllOverflowStashes(territoryIndex);
+
+                // Stash blacklist: build retain counters if feature is enabled
+                Dictionary<int, int> retainRemaining = null;
+                if (Core.PlayerSettings.IsStashBlacklistEnabled(user.PlatformId))
+                {
+                    var blacklist = Core.PlayerSettings.GetBlacklist(user.PlatformId);
+                    if (blacklist.Count > 0)
+                    {
+                        retainRemaining = new Dictionary<int, int>(blacklist.Count);
+                        foreach (var (guidHash, retainCount) in blacklist)
+                            retainRemaining[guidHash] = retainCount;
+                    }
+                }
+
                 for (int i = ACTION_BAR_SLOTS; i < inventoryBuffer.Length; i++)
                 {
                     var itemEntry = inventoryBuffer[i];
                     var item = itemEntry.ItemType;
-                    
+
+                    // Stash blacklist: retain items up to configured count
+                    int retainInSlot = 0;
+                    if (retainRemaining != null && item.GuidHash != 0 &&
+                        retainRemaining.TryGetValue(item.GuidHash, out var remaining) && remaining > 0)
+                    {
+                        retainInSlot = Math.Min(remaining, itemEntry.Amount);
+                        retainRemaining[item.GuidHash] = remaining - retainInSlot;
+                        if (retainInSlot >= itemEntry.Amount)
+                            continue; // retain entire slot
+                        itemEntry.Amount -= retainInSlot; // only stash the excess
+                    }
 
                     var hasItemEntity = !itemEntry.ItemEntity.GetEntityOnServer().Equals(Entity.Null);
 
@@ -522,7 +547,16 @@ namespace KindredLogistics.Services
                                     itemEntry.Amount = addItemResponse.RemainingAmount;
                                     if (!addItemResponse.ItemsRemaining)
                                     {
-                                        InventoryUtilitiesServer.ClearSlot(Core.EntityManager, inventory, i);
+                                        if (retainInSlot > 0)
+                                        {
+                                            var retained = inventoryBuffer[i];
+                                            retained.Amount = retainInSlot;
+                                            inventoryBuffer[i] = retained;
+                                        }
+                                        else
+                                        {
+                                            InventoryUtilitiesServer.ClearSlot(Core.EntityManager, inventory, i);
+                                        }
                                         break;
                                     }
                                 }
@@ -574,7 +608,16 @@ namespace KindredLogistics.Services
                                     itemEntry.Amount = addItemResponse.RemainingAmount;
                                     if (!addItemResponse.ItemsRemaining)
                                     {
-                                        InventoryUtilitiesServer.ClearSlot(Core.EntityManager, inventory, i);
+                                        if (retainInSlot > 0)
+                                        {
+                                            var retained = inventoryBuffer[i];
+                                            retained.Amount = retainInSlot;
+                                            inventoryBuffer[i] = retained;
+                                        }
+                                        else
+                                        {
+                                            InventoryUtilitiesServer.ClearSlot(Core.EntityManager, inventory, i);
+                                        }
                                         break;
                                     }
                                 }
@@ -585,14 +628,19 @@ namespace KindredLogistics.Services
                             }
                         }
 
-                        if (itemEntry.Amount > 0)
+                        if (itemEntry.Amount > 0 || retainInSlot > 0)
                         {
+                            var unstashable = itemEntry.Amount;
+                            itemEntry.Amount += retainInSlot;
                             inventoryBuffer[i] = itemEntry;
 
-                            if (amountUnstashed.TryGetValue(item, out var amount))
-                                amountUnstashed[item] = amount + itemEntry.Amount;
-                            else
-                                amountUnstashed[item] = itemEntry.Amount;
+                            if (unstashable > 0)
+                            {
+                                if (amountUnstashed.TryGetValue(item, out var amount))
+                                    amountUnstashed[item] = amount + unstashable;
+                                else
+                                    amountUnstashed[item] = unstashable;
+                            }
                         }
                     }
                 }

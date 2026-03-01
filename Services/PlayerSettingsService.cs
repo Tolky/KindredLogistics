@@ -10,6 +10,7 @@ namespace KindredLogistics.Services
 
         static readonly string CONFIG_PATH = Path.Combine(BepInEx.Paths.ConfigPath, MyPluginInfo.PLUGIN_NAME);
         static readonly string PLAYER_SETTINGS_PATH = Path.Combine(CONFIG_PATH, "playerSettings.json");
+        static readonly string BLACKLIST_SETTINGS_PATH = Path.Combine(CONFIG_PATH, "blacklistSettings.json");
 
         static readonly JsonSerializerOptions prettyJsonOptions = new()
         {
@@ -37,15 +38,20 @@ namespace KindredLogistics.Services
             public bool SilentPull { get; set; }
             public bool SilentStash { get; set; }
             public bool Trash { get; set; }
+            public bool StashBlacklist { get; set; }
         }
 
         PlayerSettings defaultSettings = new();
 
         Dictionary<ulong, PlayerSettings> playerSettings = [];
 
+        // Blacklist: steamId → (guidHash → retainCount)
+        Dictionary<ulong, Dictionary<int, int>> blacklistSettings = [];
+
         public PlayerSettingsService()
         {
             LoadSettings();
+            LoadBlacklistSettings();
 
             if(!playerSettings.ContainsKey(GLOBAL_PLAYER_ID))
             {
@@ -313,6 +319,71 @@ namespace KindredLogistics.Services
         public PlayerSettings GetGlobalSettings()
         {
             return playerSettings[GLOBAL_PLAYER_ID];
+        }
+
+        // Stash Blacklist methods
+
+        public bool IsStashBlacklistEnabled(ulong playerId)
+        {
+            if (!playerSettings.TryGetValue(playerId, out var settings))
+                settings = defaultSettings;
+            return settings.StashBlacklist;
+        }
+
+        public bool ToggleStashBlacklist(ulong playerId)
+        {
+            if (!playerSettings.TryGetValue(playerId, out var settings))
+                settings = new PlayerSettings();
+            settings.StashBlacklist = !settings.StashBlacklist;
+            playerSettings[playerId] = settings;
+            SaveSettings();
+            return settings.StashBlacklist;
+        }
+
+        void LoadBlacklistSettings()
+        {
+            if (!File.Exists(BLACKLIST_SETTINGS_PATH))
+            {
+                blacklistSettings = [];
+                return;
+            }
+            var json = File.ReadAllText(BLACKLIST_SETTINGS_PATH);
+            blacklistSettings = JsonSerializer.Deserialize<Dictionary<ulong, Dictionary<int, int>>>(json) ?? [];
+        }
+
+        void SaveBlacklistSettings()
+        {
+            if (!Directory.Exists(CONFIG_PATH))
+                Directory.CreateDirectory(CONFIG_PATH);
+            var json = JsonSerializer.Serialize(blacklistSettings, prettyJsonOptions);
+            File.WriteAllText(BLACKLIST_SETTINGS_PATH, json);
+        }
+
+        public Dictionary<int, int> GetBlacklist(ulong playerId)
+        {
+            if (blacklistSettings.TryGetValue(playerId, out var bl))
+                return bl;
+            return new Dictionary<int, int>();
+        }
+
+        public void SetBlacklistEntry(ulong playerId, int guidHash, int count)
+        {
+            if (!blacklistSettings.TryGetValue(playerId, out var bl))
+            {
+                bl = new Dictionary<int, int>();
+                blacklistSettings[playerId] = bl;
+            }
+            if (count <= 0)
+                bl.Remove(guidHash);
+            else
+                bl[guidHash] = count;
+            SaveBlacklistSettings();
+        }
+
+        public void ClearBlacklist(ulong playerId)
+        {
+            blacklistSettings.Remove(playerId);
+            SaveBlacklistSettings();
         }
     }
 }
