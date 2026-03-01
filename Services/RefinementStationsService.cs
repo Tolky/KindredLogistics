@@ -36,6 +36,22 @@ namespace KindredLogistics.Services
         readonly Regex senderRegex;
 
         readonly Dictionary<Entity, List<Entity>> refinementStationsByHeart = [];
+        readonly Dictionary<Entity, string> _nameCache = new(capacity: 100);
+
+        internal string GetCachedName(Entity entity)
+        {
+            if (!_nameCache.TryGetValue(entity, out var name))
+            {
+                name = entity.Read<NameableInteractable>().Name.ToString().ToLower();
+                _nameCache[entity] = name;
+            }
+            return name;
+        }
+
+        internal void FlushNameCache()
+        {
+            _nameCache.Clear();
+        }
 
         public RefinementStationsService() 
         {
@@ -130,7 +146,7 @@ namespace KindredLogistics.Services
                     continue;
                 }
                 if (stationEntity.Has<Disabled>()) continue;
-                var name = stationEntity.Read<NameableInteractable>().Name.ToString().ToLower();
+                var name = GetCachedName(stationEntity);
                 foreach (Match match in groupRegex.Matches(name))
                 {
                     var group = int.Parse(match.Groups[1].Value);
