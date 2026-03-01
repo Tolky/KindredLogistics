@@ -5,13 +5,9 @@ using ProjectM.Network;
 using Stunlock.Core;
 using System;
 using System.Collections.Generic;
-using System.Linq;
 using System.Text.RegularExpressions;
 using Unity.Collections;
 using Unity.Entities;
-using UnityEngine.TextCore.Text;
-using UnityEngine.UIElements;
-
 namespace KindredLogistics.Services
 {
     internal class StashService
@@ -73,6 +69,8 @@ namespace KindredLogistics.Services
             return priority;
         }
 
+
+
         internal void FlushNameCache()
         {
             _nameCache.Clear();
@@ -90,6 +88,20 @@ namespace KindredLogistics.Services
             public readonly List<Entity> SpawnerStashes = new(4);
             public readonly List<Entity> BrazierStashes = new(4);
             public readonly List<Entity> TrashStashes = new(4);
+            public readonly HashSet<Entity> SalvageReceiverStashes = new(4);
+
+            public void Clear()
+            {
+                NormalStashes.Clear();
+                ReceiverStashes.Clear();
+                SenderStashes.Clear();
+                OverflowStashes.Clear();
+                SalvageStashes.Clear();
+                SpawnerStashes.Clear();
+                BrazierStashes.Clear();
+                TrashStashes.Clear();
+                SalvageReceiverStashes.Clear();
+            }
         }
 
         readonly Dictionary<int, TerritoryStashData> _territoryCache = new(capacity: 32);
@@ -143,7 +155,12 @@ namespace KindredLogistics.Services
                 bool isTrash = name.Contains("trash");
 
                 if (isOverflow) data.OverflowStashes.Add(stash);
-                if (isSalvage) data.SalvageStashes.Add(stash);
+                if (isSalvage)
+                {
+                    data.SalvageStashes.Add(stash);
+                    if (receiverRegex.IsMatch(name))
+                        data.SalvageReceiverStashes.Add(stash);
+                }
                 if (isSpawner) data.SpawnerStashes.Add(stash);
                 if (isBrazier) data.BrazierStashes.Add(stash);
                 if (isTrash) data.TrashStashes.Add(stash);
@@ -244,6 +261,11 @@ namespace KindredLogistics.Services
             return GetOrClassifyTerritory(territoryId).TrashStashes;
         }
 
+        public bool IsClassifiedAsReceiver(int territoryId, Entity stash)
+        {
+            return GetOrClassifyTerritory(territoryId).SalvageReceiverStashes.Contains(stash);
+        }
+
         public void StashCharacterInventory(Entity charEntity)
         {
             try
@@ -309,6 +331,8 @@ namespace KindredLogistics.Services
                 var matches = new Dictionary<PrefabGUID, List<(Entity stash, Entity inventory)>>(capacity: 100);
                 var foundStash = false;
                 var alreadyAdded = new HashSet<PrefabGUID>();
+                // Force fresh classification to include newly placed chests
+                InvalidateTerritory(territoryIndex);
                 var normalStashes = GetOrClassifyTerritory(territoryIndex).NormalStashes;
                 foreach (var stash in normalStashes)
                 {
@@ -457,7 +481,7 @@ namespace KindredLogistics.Services
                         if (!success)
                         {
                             ItemData itemData = default;
-                            if (overflowStashes.Any() &&
+                            if (overflowStashes.Count > 0 &&
                                 Core.PrefabCollectionSystem._PrefabLookupMap.TryGetValue(itemEntry.ItemType, out var prefab))
                             {
                                 itemData = prefab.Read<ItemData>();
@@ -570,7 +594,7 @@ namespace KindredLogistics.Services
                         if (itemEntry.Amount > 0)
                         {
                             ItemData itemData = default;
-                            if (overflowStashes.Any() &&
+                            if (overflowStashes.Count > 0 &&
                                 Core.PrefabCollectionSystem._PrefabLookupMap.TryGetValue(itemEntry.ItemType, out var prefab))
                             {
                                 itemData = prefab.Read<ItemData>();
