@@ -111,7 +111,13 @@ namespace Logistics.Commands
             var SteamID = ctx.Event.User.PlatformId;
 
             var stashBlacklist = Core.PlayerSettings.ToggleStashBlacklist(SteamID);
-            ctx.Reply($"StashBlacklist is {(stashBlacklist ? "<color=green>enabled</color>" : "<color=red>disabled</color>")}.");
+            if (stashBlacklist)
+                ctx.Reply("StashBlacklist is <color=green>enabled</color>.\n" +
+                          "  <color=yellow>.l bl</color> - List blacklisted items\n" +
+                          "  <color=yellow>.l bl [item name] [count]</color> - Add/update a blacklist entry (0 to remove)\n" +
+                          "  <color=yellow>.l blclear</color> - Clear your entire blacklist");
+            else
+                ctx.Reply("StashBlacklist is <color=red>disabled</color>.");
         }
 
         [Command(name: "blacklist", shortHand: "bl", usage: ".l bl [item] [count]", description: "Set or list stash blacklist entries. Use '.l bl' to list, '.l bl <item> <count>' to set (0 to remove).")]
