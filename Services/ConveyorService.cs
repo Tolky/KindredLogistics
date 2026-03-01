@@ -684,11 +684,13 @@ namespace KindredLogistics.Services
                                 amountTransferred = Utilities.TransferItems(Core.ServerGameManager, salvageSupplierInventory, inputInventoryEntity, itemType, amountToTransfer);
                             leftToGetTrash--;
 
+                            var removedFromList = false;
                             if (amountTransferred < amountToTransfer)
                             {
                                 if (Core.ServerGameManager.HasFullInventory(inputInventoryEntity))
                                 {
                                     _salvagers.RemoveAt(i);
+                                    removedFromList = true;
                                 }
                                 else
                                 {
@@ -707,7 +709,8 @@ namespace KindredLogistics.Services
                             {
                                 salvageStation.IsWorking = true;
                                 salvager.entity.Write(salvageStation);
-                                _salvagers[salvager.index] = (salvager.entity, salvageStation, salvager.index);
+                                if (!removedFromList)
+                                    _salvagers[i] = (salvager.entity, salvageStation, salvager.index);
                             }
 
                             if (totalAmountToTransfer <= 0) break;
