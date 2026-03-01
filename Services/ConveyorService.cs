@@ -15,8 +15,9 @@ namespace KindredLogistics.Services
     internal class ConveyorService
     {
         readonly Dictionary<PrefabGUID, int> amountToDistribute = [];
+        readonly Dictionary<(int group, PrefabGUID item), List<(Entity receiver, int amount, bool chest)>> _receivingNeeds = new(32);
+        readonly HashSet<PrefabGUID> _alreadyAdded = new(32);
 
-        PrefabGUID Item_Building_Siege_Golem_T02 = new(-1461326411);
 
         public ConveyorService()
         {
@@ -39,7 +40,7 @@ namespace KindredLogistics.Services
             var serverGameManager = Core.ServerGameManager;
 
             // Determine what is needed for each station
-            var receivingNeeds = new Dictionary<(int group, PrefabGUID item), List<(Entity receiver, int amount, bool chest)>>();
+            _receivingNeeds.Clear();
             foreach (var (group, station) in Core.RefinementStations.GetAllReceivingStations(territoryId))
             {
                 var receivingStation = station.Read<Refinementstation>();
@@ -83,10 +84,10 @@ namespace KindredLogistics.Services
 
                         if (amountWanted <= 0) continue;
 
-                        if (!receivingNeeds.TryGetValue((group, requirement.Guid), out var needs))
+                        if (!_receivingNeeds.TryGetValue((group, requirement.Guid), out var needs))
                         {
                             needs = [];
-                            receivingNeeds[(group, requirement.Guid)] = needs;
+                            _receivingNeeds[(group, requirement.Guid)] = needs;
                         }
 
                         needs.Add((inputInventoryEntity, amountWanted, false));
@@ -95,30 +96,32 @@ namespace KindredLogistics.Services
             }
 
             // Determine what is desired by each receiving stash
-            var alreadyAdded = new HashSet<PrefabGUID>();
+            _alreadyAdded.Clear();
             foreach (var (group, stash) in Core.Stash.GetAllReceivingStashes(territoryId))
             {
                 if (!serverGameManager.TryGetBuffer<AttachedBuffer>(stash, out var buffer))
                     continue;
+
                 foreach (var attachedBuffer in buffer)
                 {
                     var attachedEntity = attachedBuffer.Entity;
                     if (!attachedEntity.Has<PrefabGUID>()) continue;
                     if (!attachedEntity.Read<PrefabGUID>().Equals(StashService.ExternalInventoryPrefab)) continue;
 
-                    alreadyAdded.Clear();
+                    _alreadyAdded.Clear();
                     var inventoryBuffer = attachedEntity.ReadBuffer<InventoryBuffer>();
+
                     foreach (var item in inventoryBuffer)
                     {
                         if (item.ItemType.GuidHash == 0) continue;
 
-                        if (alreadyAdded.Contains(item.ItemType)) continue;
-                        alreadyAdded.Add(item.ItemType);
+                        if (_alreadyAdded.Contains(item.ItemType)) continue;
+                        _alreadyAdded.Add(item.ItemType);
 
-                        if (!receivingNeeds.TryGetValue((group, item.ItemType), out var needs))
+                        if (!_receivingNeeds.TryGetValue((group, item.ItemType), out var needs))
                         {
                             needs = [];
-                            receivingNeeds[(group, item.ItemType)] = needs;
+                            _receivingNeeds[(group, item.ItemType)] = needs;
                         }
 
                         needs.Add((attachedEntity, -1, true));
@@ -126,11 +129,11 @@ namespace KindredLogistics.Services
                 }
             }
 
-            if (receivingNeeds.Count == 0) yield break;
+            if (_receivingNeeds.Count == 0) yield break;
 
             Dictionary<PrefabGUID, List<List<(Entity receiver, int amount, bool chest)>>> ungroupedItemLookup = null;
             // First distribute from overflow stashes
-            var overflowStashes = Core.Stash.GetAllOverflowStashes(territoryId).ToArray();
+            var overflowStashes = Core.Stash.GetAllOverflowStashes(territoryId);
             foreach (var overflowStash in overflowStashes)
             {
                 if (!Core.EntityManager.Exists(overflowStash)) continue;
@@ -141,40 +144,41 @@ namespace KindredLogistics.Services
                     var attachedEntity = attachedBuffer.Entity;
                     if (!attachedEntity.Has<PrefabGUID>()) continue;
                     if (!attachedEntity.Read<PrefabGUID>().Equals(StashService.ExternalInventoryPrefab)) continue;
-                    DistributeInventoryFromOverflow(receivingNeeds, serverGameManager, attachedEntity, ref ungroupedItemLookup);
+                    DistributeInventoryFromOverflow(_receivingNeeds, serverGameManager, attachedEntity, ref ungroupedItemLookup);
                 }
                 if (Core.TerritoryService.ShouldUpdateYield())
                     yield return null;
             }
 
             // Now distribute from all the sender stations to the stations in need
-            foreach (var (group, sendingStation) in Core.RefinementStations.GetAllSendingStations(territoryId).ToArray())
+            foreach (var (group, sendingStation) in Core.RefinementStations.GetAllSendingStations(territoryId))
             {
                 if (!Core.EntityManager.Exists(sendingStation)) continue;
 
                 var refinementStation = sendingStation.Read<Refinementstation>();
                 var outputInventoryEntity = refinementStation.OutputInventoryEntity.GetEntityOnServer();
                 if (outputInventoryEntity.Equals(Entity.Null)) continue;
-                DistributeInventory(receivingNeeds, serverGameManager, group, outputInventoryEntity, overflowStashes);
+                DistributeInventory(_receivingNeeds, serverGameManager, group, outputInventoryEntity, overflowStashes);
 
                 if (Core.TerritoryService.ShouldUpdateYield())
                     yield return null;
             }
 
             // Next distribute from all the send stashes
-            var emptyArray = System.Array.Empty<Entity>();
+            List<Entity> emptyList = [];
             foreach (var (group, sendingStash) in Core.Stash.GetAllSendingStashes(territoryId))
             {
                 if (!Core.EntityManager.Exists(sendingStash)) continue;
                 if (!serverGameManager.TryGetBuffer<AttachedBuffer>(sendingStash, out var buffer))
                     continue;
+
                 foreach (var attachedBuffer in buffer)
                 {
                     var attachedEntity = attachedBuffer.Entity;
                     if (!attachedEntity.Has<PrefabGUID>()) continue;
                     if (!attachedEntity.Read<PrefabGUID>().Equals(StashService.ExternalInventoryPrefab)) continue;
 
-                    DistributeInventory(receivingNeeds, serverGameManager, group, attachedEntity, emptyArray, retain: 1, chest: true);
+                    DistributeInventory(_receivingNeeds, serverGameManager, group, attachedEntity, emptyList, retain: 1, chest: true);
                 }
 
                 if (Core.TerritoryService.ShouldUpdateYield())
@@ -184,14 +188,17 @@ namespace KindredLogistics.Services
 
         readonly HashSet<Entity> salvagerFull = [];
         readonly HashSet<(Entity entity, PrefabGUID item)> salvagerFullOfItem = [];
+        readonly List<(Entity entity, Salvagestation station, int index)> _salvagers = new(16);
+        readonly Dictionary<PrefabGUID, (bool itemEntity, int amount)> _itemAmountsToTransfer = new(32);
 
         IEnumerator ProcessSalvagers(int territoryId, Entity castleHeartEntity)
         {
             if (!Core.PlayerSettings.IsSalvageEnabled(0)) yield break;
 
-            var salvagers = Core.SalvageService.GetAllSalvageStations(territoryId)
-                            .Select((s, i) => (entity: s, station: s.Read<Salvagestation>(), index: i))
-                            .ToList();
+            _salvagers.Clear();
+            var idx = 0;
+            foreach (var s in Core.SalvageService.GetAllSalvageStations(territoryId))
+                _salvagers.Add((s, s.Read<Salvagestation>(), idx++));
 
             var userOwner = castleHeartEntity.Read<UserOwner>();
             if (userOwner.Owner.GetEntityOnServer() == Entity.Null) yield break;
@@ -201,11 +208,11 @@ namespace KindredLogistics.Services
 
             // Empty all salvage outputs first
             var itemStashes = Utilities.GetItemStashesOnTerritory(territoryId);
-            var overflows = Core.Stash.GetAllOverflowStashes(territoryId).ToList();
-            foreach (var salvager in salvagers)
+            var overflows = Core.Stash.GetAllOverflowStashes(territoryId);
+            foreach (var salvager in _salvagers)
             {
                 if (!Core.EntityManager.Exists(salvager.entity)) continue;
-                
+
                 var salvageStation = salvager.station;
                 var outputInventoryEntity = salvageStation.OutputInventoryEntity.GetEntityOnServer();
 
@@ -228,13 +235,12 @@ namespace KindredLogistics.Services
             // Now fill all the salvagers
             salvagerFull.Clear();
             salvagerFullOfItem.Clear();
-            var itemAmountsToTransfer = new Dictionary<PrefabGUID, (bool itemEntity, int amount)>();
             foreach (var salvageSupplier in Core.Stash.GetAllSalvageStashes(territoryId))
             {
                 if (!Core.ServerGameManager.TryGetBuffer<AttachedBuffer>(salvageSupplier, out var buffer))
                     continue;
 
-                var name = salvageSupplier.Read<NameableInteractable>().Name.ToString().ToLower();
+                var name = Core.Stash.GetCachedName(salvageSupplier);
                 var isReceiverStash = Core.Stash.ReceiverRegex.IsMatch(name);
                 foreach (var attachedBuffer in buffer)
                 {
@@ -242,7 +248,7 @@ namespace KindredLogistics.Services
                     if (!salvageSupplierInventory.Has<PrefabGUID>()) continue;
                     if (!salvageSupplierInventory.Read<PrefabGUID>().Equals(StashService.ExternalInventoryPrefab)) continue;
 
-                    itemAmountsToTransfer.Clear();
+                    _itemAmountsToTransfer.Clear();
                     var inventoryBuffer = salvageSupplierInventory.ReadBuffer<InventoryBuffer>();
                     foreach (var item in inventoryBuffer)
                     {
@@ -250,7 +256,7 @@ namespace KindredLogistics.Services
                         if (!prefabEntity.Has<Salvageable>()) continue;
 
                         var amount = 0;
-                        if (itemAmountsToTransfer.TryGetValue(item.ItemType, out var entry))
+                        if (_itemAmountsToTransfer.TryGetValue(item.ItemType, out var entry))
                         {
                             amount = entry.amount;
                         }
@@ -259,23 +265,23 @@ namespace KindredLogistics.Services
                             amount = -1;
                         }
                         amount += item.Amount;
-                        itemAmountsToTransfer[item.ItemType] = (!item.ItemEntity.Equals(NetworkedEntity.Empty), amount);
+                        _itemAmountsToTransfer[item.ItemType] = (!item.ItemEntity.Equals(NetworkedEntity.Empty), amount);
                     }
 
-                    foreach(var (itemType, entry) in itemAmountsToTransfer)
-                    { 
+                    foreach(var (itemType, entry) in _itemAmountsToTransfer)
+                    {
                         var totalAmountToTransfer = entry.amount;
                         if (totalAmountToTransfer <= 0) continue;
-                        var leftToGetTrash = salvagers.Count - salvagerFull.Count;
+                        var leftToGetTrash = _salvagers.Count - salvagerFull.Count;
                         if (leftToGetTrash == 0) break;
-                        for (var i = salvagers.Count - 1; i >= 0; i--)
+                        for (var i = _salvagers.Count - 1; i >= 0; i--)
                         {
                             if (Core.TerritoryService.ShouldUpdateYield())
                                 yield return null;
 
                             if (!Core.EntityManager.Exists(salvageSupplierInventory)) break;
 
-                            var salvager = salvagers[i];
+                            var salvager = _salvagers[i];
                             if (salvagerFull.Contains(salvager.entity)) continue;
 
                             var salvagerKey = (salvager.entity, itemType);
@@ -310,7 +316,7 @@ namespace KindredLogistics.Services
                             {
                                 if (Core.ServerGameManager.HasFullInventory(inputInventoryEntity))
                                 {
-                                    salvagers.RemoveAt(i);
+                                    _salvagers.RemoveAt(i);
                                 }
                                 else
                                 {
@@ -329,7 +335,7 @@ namespace KindredLogistics.Services
                             {
                                 salvageStation.IsWorking = true;
                                 salvager.entity.Write(salvageStation);
-                                salvagers[salvager.index] = (salvager.entity, salvageStation, salvager.index);
+                                _salvagers[salvager.index] = (salvager.entity, salvageStation, salvager.index);
                             }
 
                             if (totalAmountToTransfer <= 0) break;
@@ -521,7 +527,7 @@ namespace KindredLogistics.Services
             foreach (var item in inventoryBuffer)
             {
                 if (item.ItemType.GuidHash == 0) continue;
-                if (!item.ItemEntity.Equals(NetworkedEntity.Empty) && item.ItemType != Item_Building_Siege_Golem_T02) continue;
+                if (!item.ItemEntity.Equals(NetworkedEntity.Empty)) continue;
 
                 if (!amountToDistribute.TryGetValue(item.ItemType, out var totalAmountDistribute))
                     totalAmountDistribute = item.Amount;
@@ -552,77 +558,89 @@ namespace KindredLogistics.Services
                 // Does anyone need this item?
                 if (!ungroupedItemLookup.TryGetValue(item, out var needs)) continue;
 
-                // Flatten the needs into a single list
-                var totalNeeds = needs.SelectMany((list, listIndex) => list.Select((entry, index) => (listIndex, index, entry)).Reverse());
-
-                var totalWanted = totalNeeds.Where(x => x.entry.amount > 0).Sum(x => x.entry.amount);
+                // Calculate totalWanted without LINQ
+                var totalWanted = 0;
+                for (var li = 0; li < needs.Count; li++)
+                    for (var ei = 0; ei < needs[li].Count; ei++)
+                        if (needs[li][ei].amount > 0)
+                            totalWanted += needs[li][ei].amount;
 
                 // If we have more than enough, distribute evenly
                 if (totalWanted <= totalAmount)
                 {
                     var leftoverAmount = totalAmount - totalWanted;
-                    foreach (var (listIndex, index, (receivingInventoryEntity, wanted, receiverChest)) in totalNeeds)
+                    // Iterate in reverse to safely RemoveAt
+                    for (var li = needs.Count - 1; li >= 0; li--)
                     {
-                        if (!Core.EntityManager.Exists(receivingInventoryEntity))
+                        for (var ei = needs[li].Count - 1; ei >= 0; ei--)
                         {
-                            needs[listIndex].RemoveAt(index);
-                            continue;
-                        }
+                            var (receivingInventoryEntity, wanted, receiverChest) = needs[li][ei];
 
-                        if (wanted > 0)
-                        {
-                            Utilities.TransferItems(serverGameManager, inventoryEntity, receivingInventoryEntity, item, wanted);
-                            needs[listIndex].RemoveAt(index);
-                        }
-                        else
-                        {
-                            var amountActuallyGiven = Utilities.TransferItems(serverGameManager, inventoryEntity, receivingInventoryEntity, item, leftoverAmount);
-
-                            if (amountActuallyGiven < leftoverAmount)
+                            if (!Core.EntityManager.Exists(receivingInventoryEntity))
                             {
-                                needs[listIndex].RemoveAt(index);
+                                needs[li].RemoveAt(ei);
+                                continue;
                             }
 
-                            leftoverAmount -= amountActuallyGiven;
+                            if (wanted > 0)
+                            {
+                                Utilities.TransferItems(serverGameManager, inventoryEntity, receivingInventoryEntity, item, wanted);
+                                needs[li].RemoveAt(ei);
+                            }
+                            else
+                            {
+                                var amountActuallyGiven = Utilities.TransferItems(serverGameManager, inventoryEntity, receivingInventoryEntity, item, leftoverAmount);
+
+                                if (amountActuallyGiven < leftoverAmount)
+                                {
+                                    needs[li].RemoveAt(ei);
+                                }
+
+                                leftoverAmount -= amountActuallyGiven;
+                            }
                         }
                     }
                 }
                 else
                 {
                     var remainder = 0;
-                    // Give out proportionally
-                    foreach (var (listIndex, index, (receivingInventoryEntity, wanted, receiverChest)) in totalNeeds)
+                    // Give out proportionally - iterate in reverse to safely RemoveAt
+                    for (var li = needs.Count - 1; li >= 0; li--)
                     {
-                        if (wanted <= 0) continue;
+                        for (var ei = needs[li].Count - 1; ei >= 0; ei--)
+                        {
+                            var (receivingInventoryEntity, wanted, receiverChest) = needs[li][ei];
+                            if (wanted <= 0) continue;
 
-                        if (!Core.EntityManager.Exists(receivingInventoryEntity))
-                        {
-                            totalWanted -= wanted;
-                            needs[listIndex].RemoveAt(index);
-                            continue;
-                        }
+                            if (!Core.EntityManager.Exists(receivingInventoryEntity))
+                            {
+                                totalWanted -= wanted;
+                                needs[li].RemoveAt(ei);
+                                continue;
+                            }
 
-                        var numerator = (long)wanted * totalAmount;
-                        var transferring = (int)(numerator / totalWanted);
-                        remainder += (int)(numerator % totalWanted);
-                        if (remainder >= totalWanted && transferring < wanted)
-                        {
-                            transferring++;
-                            remainder -= totalWanted;
-                        }
-                        var transferred = Utilities.TransferItems(serverGameManager, inventoryEntity, receivingInventoryEntity, item, transferring);
-                        if (transferred < transferring)
-                        {
-                            remainder += (transferring - transferred)*totalWanted;
-                            needs[listIndex].RemoveAt(index);
-                        }
-                        else if (transferred >= wanted)
-                        {
-                            needs[listIndex].RemoveAt(index);
-                        }
-                        else
-                        {
-                            needs[listIndex][index] = (receivingInventoryEntity, wanted - transferred, receiverChest);
+                            var numerator = (long)wanted * totalAmount;
+                            var transferring = (int)(numerator / totalWanted);
+                            remainder += (int)(numerator % totalWanted);
+                            if (remainder >= totalWanted && transferring < wanted)
+                            {
+                                transferring++;
+                                remainder -= totalWanted;
+                            }
+                            var transferred = Utilities.TransferItems(serverGameManager, inventoryEntity, receivingInventoryEntity, item, transferring);
+                            if (transferred < transferring)
+                            {
+                                remainder += (transferring - transferred) * totalWanted;
+                                needs[li].RemoveAt(ei);
+                            }
+                            else if (transferred >= wanted)
+                            {
+                                needs[li].RemoveAt(ei);
+                            }
+                            else
+                            {
+                                needs[li][ei] = (receivingInventoryEntity, wanted - transferred, receiverChest);
+                            }
                         }
                     }
                 }
@@ -630,7 +648,7 @@ namespace KindredLogistics.Services
         }
 
         void DistributeInventory(Dictionary<(int group, PrefabGUID item), List<(Entity receiver, int amount, bool chest)>> receivingNeeds,
-                                 ServerGameManager serverGameManager, int group, Entity inventoryEntity, Entity[] overflowStashes, int retain = 0, bool chest=false)
+                                 ServerGameManager serverGameManager, int group, Entity inventoryEntity, List<Entity> overflowStashes, int retain = 0, bool chest=false)
         {
             amountToDistribute.Clear();
 
@@ -638,7 +656,7 @@ namespace KindredLogistics.Services
             foreach (var item in inventoryBuffer)
             {
                 if (item.ItemType.GuidHash == 0) continue;
-                if (!item.ItemEntity.Equals(NetworkedEntity.Empty) && item.ItemType != Item_Building_Siege_Golem_T02) continue;
+                if (!item.ItemEntity.Equals(NetworkedEntity.Empty)) continue;
 
                 if (!amountToDistribute.TryGetValue(item.ItemType, out var totalAmountDistribute))
                     totalAmountDistribute = item.Amount - retain;
@@ -674,7 +692,10 @@ namespace KindredLogistics.Services
                     continue;
                 }
                 
-                var totalWanted = needs.Where(x => x.amount > 0 && (!chest || !x.chest)).Sum(x => x.amount);
+                var totalWanted = 0;
+                for (var ni = 0; ni < needs.Count; ni++)
+                    if (needs[ni].amount > 0 && (!chest || !needs[ni].chest))
+                        totalWanted += needs[ni].amount;
 
                 // If we have more than enough, distribute evenly
                 if (totalWanted <= totalAmount)
@@ -808,7 +829,7 @@ namespace KindredLogistics.Services
             foreach (var item in inventoryBuffer)
             {
                 if (item.ItemType.GuidHash == 0) continue;
-                if (!item.ItemEntity.Equals(NetworkedEntity.Empty) && item.ItemType != Item_Building_Siege_Golem_T02) continue;
+                if (!item.ItemEntity.Equals(NetworkedEntity.Empty)) continue;
 
                 if (!amountToDistribute.TryGetValue(item.ItemType, out var totalAmountDistribute))
                     totalAmountDistribute = item.Amount - retain;
@@ -822,7 +843,9 @@ namespace KindredLogistics.Services
                 // Does anyone need this item?
                 if (!receivingNeeds.TryGetValue(item, out var needs)) continue;
 
-                var totalWanted = needs.Sum(x => x.amount);
+                var totalWanted = 0;
+                for (var ni = 0; ni < needs.Count; ni++)
+                    totalWanted += needs[ni].amount;
                 if (totalWanted <= 0) continue;
 
                 // If we have more than enough, distribute evenly

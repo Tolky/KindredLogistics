@@ -5,12 +5,9 @@ using ProjectM.Network;
 using Stunlock.Core;
 using System;
 using System.Collections.Generic;
-using System.Linq;
 using System.Text.RegularExpressions;
 using Unity.Collections;
 using Unity.Entities;
-using UnityEngine.TextCore.Text;
-using UnityEngine.UIElements;
 
 namespace KindredLogistics.Services
 {
@@ -51,6 +48,34 @@ namespace KindredLogistics.Services
         readonly Dictionary<Entity, string> _nameCache = new(capacity: 200);
         readonly Dictionary<Entity, int> _priorityCache = new(capacity: 200);
 
+        internal class TerritoryStashData
+        {
+            public readonly List<Entity> NormalStashes = new(32);
+            public readonly List<(int group, Entity stash)> ReceiverStashes = new(16);
+            public readonly List<(int group, Entity stash)> SenderStashes = new(16);
+            public readonly List<Entity> OverflowStashes = new(4);
+            public readonly List<Entity> SalvageStashes = new(4);
+            public readonly List<Entity> SpawnerStashes = new(4);
+            public readonly List<Entity> BrazierStashes = new(4);
+            public readonly List<Entity> TrashStashes = new(4);
+            public readonly HashSet<Entity> SalvageReceiverStashes = new(4);
+
+            public void Clear()
+            {
+                NormalStashes.Clear();
+                ReceiverStashes.Clear();
+                SenderStashes.Clear();
+                OverflowStashes.Clear();
+                SalvageStashes.Clear();
+                SpawnerStashes.Clear();
+                BrazierStashes.Clear();
+                TrashStashes.Clear();
+                SalvageReceiverStashes.Clear();
+            }
+        }
+
+        readonly Dictionary<int, TerritoryStashData> _territoryCache = new(capacity: 32);
+
         internal string GetCachedName(Entity entity)
         {
             if (!_nameCache.TryGetValue(entity, out var name))
@@ -80,19 +105,15 @@ namespace KindredLogistics.Services
             _territoryCache.Clear();
         }
 
-        internal class TerritoryStashData
+        internal void InvalidateTerritory(int territoryId)
         {
-            public readonly List<Entity> NormalStashes = new(32);
-            public readonly List<(int group, Entity stash)> ReceiverStashes = new(16);
-            public readonly List<(int group, Entity stash)> SenderStashes = new(16);
-            public readonly List<Entity> OverflowStashes = new(4);
-            public readonly List<Entity> SalvageStashes = new(4);
-            public readonly List<Entity> SpawnerStashes = new(4);
-            public readonly List<Entity> BrazierStashes = new(4);
-            public readonly List<Entity> TrashStashes = new(4);
+            _territoryCache.Remove(territoryId);
         }
 
-        readonly Dictionary<int, TerritoryStashData> _territoryCache = new(capacity: 32);
+        internal void InvalidateAllTerritories()
+        {
+            _territoryCache.Clear();
+        }
 
         TerritoryStashData GetOrClassifyTerritory(int territoryId)
         {
@@ -124,7 +145,7 @@ namespace KindredLogistics.Services
                 if (!Core.EntityManager.Exists(stash)) continue;
 
                 var name = GetCachedName(stash);
-                if (name.EndsWith(SKIP_SUFFIX)) continue;
+                bool isSkipped = name.EndsWith(SKIP_SUFFIX);
 
                 bool isOverflow = name.Contains(OVERFLOW_SUFFIX);
                 bool isSalvage = name.Contains(SALVAGE_SUFFIX);
@@ -133,12 +154,17 @@ namespace KindredLogistics.Services
                 bool isTrash = name.Contains("trash");
 
                 if (isOverflow) data.OverflowStashes.Add(stash);
-                if (isSalvage) data.SalvageStashes.Add(stash);
+                if (isSalvage)
+                {
+                    data.SalvageStashes.Add(stash);
+                    if (receiverRegex.IsMatch(name))
+                        data.SalvageReceiverStashes.Add(stash);
+                }
                 if (isSpawner) data.SpawnerStashes.Add(stash);
                 if (isBrazier) data.BrazierStashes.Add(stash);
                 if (isTrash) data.TrashStashes.Add(stash);
 
-                if (!isSalvage && !isOverflow && !name.Contains(SPOILS_SUFFIX))
+                if (!isSalvage && !isOverflow && !name.Contains(SPOILS_SUFFIX) && !isSkipped)
                     data.NormalStashes.Add(stash);
 
                 var stashTerritoryId = Core.TerritoryService.GetTerritoryId(stash);
@@ -234,6 +260,11 @@ namespace KindredLogistics.Services
             return GetOrClassifyTerritory(territoryId).TrashStashes;
         }
 
+        public bool IsClassifiedAsReceiver(int territoryId, Entity stash)
+        {
+            return GetOrClassifyTerritory(territoryId).SalvageReceiverStashes.Contains(stash);
+        }
+
         public void StashCharacterInventory(Entity charEntity)
         {
             try
@@ -299,6 +330,8 @@ namespace KindredLogistics.Services
                 var matches = new Dictionary<PrefabGUID, List<(Entity stash, Entity inventory)>>(capacity: 100);
                 var foundStash = false;
                 var alreadyAdded = new HashSet<PrefabGUID>();
+                // Force fresh classification to include newly placed chests
+                InvalidateTerritory(territoryIndex);
                 var normalStashes = GetOrClassifyTerritory(territoryIndex).NormalStashes;
                 foreach (var stash in normalStashes)
                 {
@@ -366,11 +399,36 @@ namespace KindredLogistics.Services
                 Dictionary<(Entity stash, PrefabGUID item), int> amountStashed = [];
                 Dictionary<PrefabGUID, int> amountUnstashed = [];
                 var overflowStashes = GetAllOverflowStashes(territoryIndex);
+
+                // Stash blacklist: build retain counters if feature is enabled
+                Dictionary<int, int> retainRemaining = null;
+                if (Core.PlayerSettings.IsStashBlacklistEnabled(user.PlatformId))
+                {
+                    var blacklist = Core.PlayerSettings.GetBlacklist(user.PlatformId);
+                    if (blacklist.Count > 0)
+                    {
+                        retainRemaining = new Dictionary<int, int>(blacklist.Count);
+                        foreach (var (guidHash, retainCount) in blacklist)
+                            retainRemaining[guidHash] = retainCount;
+                    }
+                }
+
                 for (int i = ACTION_BAR_SLOTS; i < inventoryBuffer.Length; i++)
                 {
                     var itemEntry = inventoryBuffer[i];
                     var item = itemEntry.ItemType;
-                    
+
+                    // Stash blacklist: retain items up to configured count
+                    int retainInSlot = 0;
+                    if (retainRemaining != null && item.GuidHash != 0 &&
+                        retainRemaining.TryGetValue(item.GuidHash, out var remaining) && remaining > 0)
+                    {
+                        retainInSlot = Math.Min(remaining, itemEntry.Amount);
+                        retainRemaining[item.GuidHash] = remaining - retainInSlot;
+                        if (retainInSlot >= itemEntry.Amount)
+                            continue; // retain entire slot
+                        itemEntry.Amount -= retainInSlot; // only stash the excess
+                    }
 
                     var hasItemEntity = !itemEntry.ItemEntity.GetEntityOnServer().Equals(Entity.Null);
 
@@ -422,7 +480,7 @@ namespace KindredLogistics.Services
                         if (!success)
                         {
                             ItemData itemData = default;
-                            if (overflowStashes.Any() &&
+                            if (overflowStashes.Count > 0 &&
                                 Core.PrefabCollectionSystem._PrefabLookupMap.TryGetValue(itemEntry.ItemType, out var prefab))
                             {
                                 itemData = prefab.Read<ItemData>();
@@ -512,7 +570,16 @@ namespace KindredLogistics.Services
                                     itemEntry.Amount = addItemResponse.RemainingAmount;
                                     if (!addItemResponse.ItemsRemaining)
                                     {
-                                        InventoryUtilitiesServer.ClearSlot(Core.EntityManager, inventory, i);
+                                        if (retainInSlot > 0)
+                                        {
+                                            var retained = inventoryBuffer[i];
+                                            retained.Amount = retainInSlot;
+                                            inventoryBuffer[i] = retained;
+                                        }
+                                        else
+                                        {
+                                            InventoryUtilitiesServer.ClearSlot(Core.EntityManager, inventory, i);
+                                        }
                                         break;
                                     }
                                 }
@@ -526,7 +593,7 @@ namespace KindredLogistics.Services
                         if (itemEntry.Amount > 0)
                         {
                             ItemData itemData = default;
-                            if (overflowStashes.Any() &&
+                            if (overflowStashes.Count > 0 &&
                                 Core.PrefabCollectionSystem._PrefabLookupMap.TryGetValue(itemEntry.ItemType, out var prefab))
                             {
                                 itemData = prefab.Read<ItemData>();
@@ -564,7 +631,16 @@ namespace KindredLogistics.Services
                                     itemEntry.Amount = addItemResponse.RemainingAmount;
                                     if (!addItemResponse.ItemsRemaining)
                                     {
-                                        InventoryUtilitiesServer.ClearSlot(Core.EntityManager, inventory, i);
+                                        if (retainInSlot > 0)
+                                        {
+                                            var retained = inventoryBuffer[i];
+                                            retained.Amount = retainInSlot;
+                                            inventoryBuffer[i] = retained;
+                                        }
+                                        else
+                                        {
+                                            InventoryUtilitiesServer.ClearSlot(Core.EntityManager, inventory, i);
+                                        }
                                         break;
                                     }
                                 }
@@ -575,14 +651,19 @@ namespace KindredLogistics.Services
                             }
                         }
 
-                        if (itemEntry.Amount > 0)
+                        if (itemEntry.Amount > 0 || retainInSlot > 0)
                         {
+                            var unstashable = itemEntry.Amount;
+                            itemEntry.Amount += retainInSlot;
                             inventoryBuffer[i] = itemEntry;
 
-                            if (amountUnstashed.TryGetValue(item, out var amount))
-                                amountUnstashed[item] = amount + itemEntry.Amount;
-                            else
-                                amountUnstashed[item] = itemEntry.Amount;
+                            if (unstashable > 0)
+                            {
+                                if (amountUnstashed.TryGetValue(item, out var amount))
+                                    amountUnstashed[item] = amount + unstashable;
+                                else
+                                    amountUnstashed[item] = unstashable;
+                            }
                         }
                     }
                 }
