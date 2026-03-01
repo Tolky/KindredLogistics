@@ -1,5 +1,4 @@
 using KindredLogistics;
-using KindredLogistics.Commands.Converters;
 using KindredLogistics.Services;
 using Steamworks;
 using VampireCommandFramework;
@@ -33,6 +32,11 @@ namespace Logistics.Commands
             var SteamID = ctx.Event.User.PlatformId;
 
             var dontPullLast = Core.PlayerSettings.ToggleDontPullLast(SteamID);
+            // Re-evaluate the player's territory so the new retain value takes effect immediately
+            var character = ctx.Event.SenderCharacterEntity;
+            var territoryId = Core.TerritoryService.GetTerritoryId(character);
+            if (territoryId >= 0)
+                ConveyorService.MarkTerritoryPending(territoryId);
             ctx.Reply($"DontPullLast is {(dontPullLast ? "<color=green>enabled</color>" : "<color=red>disabled</color>")}.");
         }
 
@@ -116,7 +120,7 @@ namespace Logistics.Commands
                       $"Salvage: {(globalSettings.Salvage ? (settings.Salvage ? "<color=green>On</color>" : "<color=red>Off</color>") : "<color=red>Server Off</color>")}\n" +
                       $"UnitSpawner: {(globalSettings.UnitSpawner ? (settings.UnitSpawner ? "<color=green>On</color>" : "<color=red>Off</color>") : "<color=red>Server Off</color>")}\n" +
                       $"Brazier: {(globalSettings.Brazier ? (settings.Brazier ? "<color=green>On</color>" : "<color=red>Off</color>") : "<color=red>Server Off</color>")}" + $" | Named: {(globalSettings.Named ? "<color=green>Server On</color>" : "<color=red>Server Off</color>")}\n" +
-                      $"Silent (Pull: {(settings.SilentPull ? "<color=green>On</color>" : "<color=red>Off</color>")}" + $" | Stash: { (settings.SilentStash ? "<color=green>On</color>" : "<color=red>Off</color>")})"
+                      $"Silent (Pull: {(settings.SilentPull ? "<color=green>On</color>" : "<color=red>Off</color>")}" + $" | Stash: {(settings.SilentStash ? "<color=green>On</color>" : "<color=red>Off</color>")})"
                       );
         }
 
