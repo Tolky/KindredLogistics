@@ -72,7 +72,8 @@ public static class RecipeTogglePatches
                 Core.Stash.InvalidateAllTerritories();
                 ConveyorService.RefreshReverseMap();
                 for (int t = TerritoryService.MIN_TERRITORY_ID; t <= TerritoryService.MAX_TERRITORY_ID; t++)
-                    ConveyorService.MarkTerritoryPending(t);
+                    if (Core.TerritoryService.GetCastleHeart(t) != Entity.Null)
+                        ConveyorService.MarkTerritoryPending(t);
                 Core.Log.LogInfo("[Startup] Player connected — all territories initialized");
             }
 

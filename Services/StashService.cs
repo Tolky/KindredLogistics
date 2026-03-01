@@ -52,6 +52,39 @@ namespace KindredLogistics.Services
         readonly Dictionary<Entity, int> _reserveCache = new(capacity: 200);
         readonly Dictionary<Entity, int> _capCache = new(capacity: 200);
 
+        // Pooled collections for StashCharacterInventory to avoid per-call allocations
+        readonly Dictionary<PrefabGUID, List<(Entity stash, Entity inventory)>> _stashMatches = new(capacity: 100);
+        readonly List<List<(Entity stash, Entity inventory)>> _stashMatchListPool = new(64);
+        readonly HashSet<PrefabGUID> _stashAlreadyAdded = new(32);
+        readonly HashSet<PrefabGUID> _stashTransferredItems = new(32);
+        readonly Dictionary<(Entity stash, PrefabGUID item), int> _stashAmountStashed = new(32);
+        readonly Dictionary<PrefabGUID, int> _stashAmountUnstashed = new(16);
+        int _stashMatchListPoolIndex;
+
+        List<(Entity stash, Entity inventory)> RentMatchList()
+        {
+            if (_stashMatchListPoolIndex < _stashMatchListPool.Count)
+            {
+                var list = _stashMatchListPool[_stashMatchListPoolIndex++];
+                list.Clear();
+                return list;
+            }
+            var newList = new List<(Entity stash, Entity inventory)>(8);
+            _stashMatchListPool.Add(newList);
+            _stashMatchListPoolIndex++;
+            return newList;
+        }
+
+        void ClearStashCollections()
+        {
+            _stashMatches.Clear();
+            _stashMatchListPoolIndex = 0;
+            _stashAlreadyAdded.Clear();
+            _stashTransferredItems.Clear();
+            _stashAmountStashed.Clear();
+            _stashAmountUnstashed.Clear();
+        }
+
         internal class TerritoryStashData
         {
             public readonly List<Entity> NormalStashes = new(32);
@@ -441,9 +474,10 @@ namespace KindredLogistics.Services
                 }
 
                 var serverGameManager = Core.ServerGameManager;
-                var matches = new Dictionary<PrefabGUID, List<(Entity stash, Entity inventory)>>(capacity: 100);
+                ClearStashCollections();
+                var matches = _stashMatches;
                 var foundStash = false;
-                var alreadyAdded = new HashSet<PrefabGUID>();
+                var alreadyAdded = _stashAlreadyAdded;
                 // Force fresh classification to include newly placed chests
                 InvalidateTerritory(territoryIndex);
                 var normalStashes = GetOrClassifyTerritory(territoryIndex).NormalStashes;
@@ -477,7 +511,7 @@ namespace KindredLogistics.Services
                                 alreadyAdded.Add(item);
                                 if (!matches.TryGetValue(item, out var itemMatches))
                                 {
-                                    itemMatches = [];
+                                    itemMatches = RentMatchList();
                                     matches[item] = itemMatches;
                                 }
                                 itemMatches.Add((stash, attachedEntity));
@@ -509,9 +543,9 @@ namespace KindredLogistics.Services
                     return;
 
                 var addItemSettings = Utilities.GetAddItemSettings();
-                HashSet<PrefabGUID> transferredItems = [];
-                Dictionary<(Entity stash, PrefabGUID item), int> amountStashed = [];
-                Dictionary<PrefabGUID, int> amountUnstashed = [];
+                var transferredItems = _stashTransferredItems;
+                var amountStashed = _stashAmountStashed;
+                var amountUnstashed = _stashAmountUnstashed;
                 var overflowStashes = GetAllOverflowStashes(territoryIndex);
 
                 // Stash blacklist: build retain counters if feature is enabled
