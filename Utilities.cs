@@ -252,6 +252,7 @@ namespace KindredLogistics
             inventoryOwner.HasItems = false;
             inventory.Write(inventoryOwner);
 
+            if (!inventory.Has<InventoryConnection>()) return;
             var connectionEntity = inventory.Read<InventoryConnection>().InventoryOwner;
             var invOwnerOnConnection = connectionEntity.Read<InventoryOwner>();
             invOwnerOnConnection.HasItems = false;

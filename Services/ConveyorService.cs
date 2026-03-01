@@ -241,7 +241,7 @@ namespace KindredLogistics.Services
             for (int smi = stationMeta.Count - 1; smi >= 0; smi--)
             {
                 var (group, st, inputInv) = stationMeta[smi];
-                if (!Core.EntityManager.Exists(st))
+                if (!Core.EntityManager.Exists(st) || !Core.EntityManager.Exists(inputInv))
                 {
                     stationMeta.RemoveAt(smi);
                     continue;
