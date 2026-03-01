@@ -103,6 +103,16 @@ namespace KindredLogistics.Services
                 foreach (var stash in Core.Stash.GetAllOverflowStashes(t)) RegisterStashInventories(stash);
                 foreach (var (_, stash) in Core.Stash.GetAllSendingStashes(t)) RegisterStashInventories(stash);
                 foreach (var (_, stash) in Core.Stash.GetAllReceivingStashes(t)) RegisterStashInventories(stash);
+                foreach (var stash in Core.Stash.GetAllSalvageStashes(t)) RegisterStashInventories(stash);
+                foreach (var salvageStation in Core.SalvageService.GetAllSalvageStations(t))
+                {
+                    if (!Core.EntityManager.Exists(salvageStation)) continue;
+                    var ss = salvageStation.Read<Salvagestation>();
+                    var inp = ss.InputInventoryEntity.GetEntityOnServer();
+                    if (inp != Entity.Null) _inventoryToTerritory[inp] = t;
+                    var outp = ss.OutputInventoryEntity.GetEntityOnServer();
+                    if (outp != Entity.Null) _inventoryToTerritory[outp] = t;
+                }
             }
         }
 
@@ -151,6 +161,7 @@ namespace KindredLogistics.Services
             // Rebuild station metadata cache only for THIS territory if it was marked dirty
             if (RefinementStationsService.ConsumeTerritoryDirty(territoryId))
                 _stationMetaCache.Remove(territoryId);
+            bool cacheRebuilt = !_stationMetaCache.ContainsKey(territoryId);
             if (!_stationMetaCache.TryGetValue(territoryId, out var stationMeta))
             {
                 stationMeta = new(16);
@@ -164,39 +175,61 @@ namespace KindredLogistics.Services
                 _stationMetaCache[territoryId] = stationMeta;
             }
 
-            // Register station input inventories in reverse map for event-driven lookup
-            foreach (var (_, _, inputInv) in stationMeta)
-                _inventoryToTerritory[inputInv] = territoryId;
-            // Also register output inventories + sending station outputs
-            foreach (var (_, sendingStation) in Core.RefinementStations.GetAllSendingStations(territoryId))
+            // Register reverse map entries only when cache was rebuilt (structural change)
+            if (cacheRebuilt)
             {
-                if (Core.EntityManager.Exists(sendingStation))
+                // Register station input inventories in reverse map for event-driven lookup
+                foreach (var (_, _, inputInv) in stationMeta)
+                    _inventoryToTerritory[inputInv] = territoryId;
+                // Also register output inventories + sending station outputs
+                foreach (var (_, sendingStation) in Core.RefinementStations.GetAllSendingStations(territoryId))
                 {
-                    var outInv = sendingStation.Read<Refinementstation>().OutputInventoryEntity.GetEntityOnServer();
-                    if (outInv != Entity.Null) _inventoryToTerritory[outInv] = territoryId;
+                    if (Core.EntityManager.Exists(sendingStation))
+                    {
+                        var outInv = sendingStation.Read<Refinementstation>().OutputInventoryEntity.GetEntityOnServer();
+                        if (outInv != Entity.Null) _inventoryToTerritory[outInv] = territoryId;
+                    }
                 }
-            }
-            // Register stash inventory sub-entities
-            foreach (var overflowStash in Core.Stash.GetAllOverflowStashes(territoryId))
-            {
-                if (serverGameManager.TryGetBuffer<AttachedBuffer>(overflowStash, out var abuf))
-                    foreach (var att in abuf)
-                        if (att.Entity.Has<PrefabGUID>() && att.Entity.Read<PrefabGUID>().Equals(StashService.ExternalInventoryPrefab))
-                            _inventoryToTerritory[att.Entity] = territoryId;
-            }
-            foreach (var (_, sendingStash) in Core.Stash.GetAllSendingStashes(territoryId))
-            {
-                if (serverGameManager.TryGetBuffer<AttachedBuffer>(sendingStash, out var abuf))
-                    foreach (var att in abuf)
-                        if (att.Entity.Has<PrefabGUID>() && att.Entity.Read<PrefabGUID>().Equals(StashService.ExternalInventoryPrefab))
-                            _inventoryToTerritory[att.Entity] = territoryId;
-            }
-            foreach (var (_, receivingStash) in Core.Stash.GetAllReceivingStashes(territoryId))
-            {
-                if (serverGameManager.TryGetBuffer<AttachedBuffer>(receivingStash, out var abuf))
-                    foreach (var att in abuf)
-                        if (att.Entity.Has<PrefabGUID>() && att.Entity.Read<PrefabGUID>().Equals(StashService.ExternalInventoryPrefab))
-                            _inventoryToTerritory[att.Entity] = territoryId;
+                // Register stash inventory sub-entities
+                foreach (var overflowStash in Core.Stash.GetAllOverflowStashes(territoryId))
+                {
+                    if (serverGameManager.TryGetBuffer<AttachedBuffer>(overflowStash, out var abuf))
+                        foreach (var att in abuf)
+                            if (att.Entity.Has<PrefabGUID>() && att.Entity.Read<PrefabGUID>().Equals(StashService.ExternalInventoryPrefab))
+                                _inventoryToTerritory[att.Entity] = territoryId;
+                }
+                foreach (var (_, sendingStash) in Core.Stash.GetAllSendingStashes(territoryId))
+                {
+                    if (serverGameManager.TryGetBuffer<AttachedBuffer>(sendingStash, out var abuf))
+                        foreach (var att in abuf)
+                            if (att.Entity.Has<PrefabGUID>() && att.Entity.Read<PrefabGUID>().Equals(StashService.ExternalInventoryPrefab))
+                                _inventoryToTerritory[att.Entity] = territoryId;
+                }
+                foreach (var (_, receivingStash) in Core.Stash.GetAllReceivingStashes(territoryId))
+                {
+                    if (serverGameManager.TryGetBuffer<AttachedBuffer>(receivingStash, out var abuf))
+                        foreach (var att in abuf)
+                            if (att.Entity.Has<PrefabGUID>() && att.Entity.Read<PrefabGUID>().Equals(StashService.ExternalInventoryPrefab))
+                                _inventoryToTerritory[att.Entity] = territoryId;
+                }
+                foreach (var salvageStash in Core.Stash.GetAllSalvageStashes(territoryId))
+                {
+                    if (serverGameManager.TryGetBuffer<AttachedBuffer>(salvageStash, out var abuf))
+                        foreach (var att in abuf)
+                            if (att.Entity.Has<PrefabGUID>() && att.Entity.Read<PrefabGUID>().Equals(StashService.ExternalInventoryPrefab))
+                                _inventoryToTerritory[att.Entity] = territoryId;
+                }
+                foreach (var salvageStation in Core.SalvageService.GetAllSalvageStations(territoryId))
+                {
+                    if (Core.EntityManager.Exists(salvageStation))
+                    {
+                        var ss = salvageStation.Read<Salvagestation>();
+                        var inp = ss.InputInventoryEntity.GetEntityOnServer();
+                        if (inp != Entity.Null) _inventoryToTerritory[inp] = territoryId;
+                        var outp = ss.OutputInventoryEntity.GetEntityOnServer();
+                        if (outp != Entity.Null) _inventoryToTerritory[outp] = territoryId;
+                    }
+                }
             }
 
             // Pre-scan: only read dynamic data (RecipesBuffer + InventoryBuffer) per station
