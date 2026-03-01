@@ -83,7 +83,7 @@ namespace KindredLogistics.Services
             }
 
             var json = File.ReadAllText(PLAYER_SETTINGS_PATH);
-            playerSettings = JsonSerializer.Deserialize<Dictionary<ulong, PlayerSettings>>(json);
+            playerSettings = JsonSerializer.Deserialize<Dictionary<ulong, PlayerSettings>>(json) ?? [];
         }
 
         void SaveSettings()
@@ -404,7 +404,11 @@ namespace KindredLogistics.Services
                 return;
             }
             var json = File.ReadAllText(RESERVE_SETTINGS_PATH);
-            reserveMultipliers = JsonSerializer.Deserialize<Dictionary<int, float>>(json);
+            reserveMultipliers = JsonSerializer.Deserialize<Dictionary<int, float>>(json) ?? new();
+            // Ensure defaults exist for any missing template IDs
+            for (int i = 0; i < DEFAULT_RESERVE_MULTIPLIERS.Length; i++)
+                if (!reserveMultipliers.ContainsKey(i))
+                    reserveMultipliers[i] = DEFAULT_RESERVE_MULTIPLIERS[i];
         }
 
         void SaveReserveSettings()
