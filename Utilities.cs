@@ -98,7 +98,10 @@ namespace KindredLogistics
 
                         int transferred;
                         if (isItemEntity)
-                            TransferItemEntities(inventory, stashEntry.inventory, item, effectiveAmount, ref i, out transferred);
+                        {
+                            var destSlot = 0;
+                            TransferItemEntities(inventory, stashEntry.inventory, item, effectiveAmount, ref destSlot, out transferred);
+                        }
                         else
                             transferred = TransferItems(serverGameManager, inventory, stashEntry.inventory, item, effectiveAmount);
                         amountToTransfer -= transferred;
@@ -136,7 +139,10 @@ namespace KindredLogistics
 
                         int transferred = 0;
                         if (isItemEntity)
-                            TransferItemEntities(inventory, iie.ExternalInventoryEntity.GetEntityOnServer(), item, amountToTransfer, ref i, out transferred);
+                        {
+                            var destSlot = 0;
+                            TransferItemEntities(inventory, iie.ExternalInventoryEntity.GetEntityOnServer(), item, amountToTransfer, ref destSlot, out transferred);
+                        }
                         else
                             transferred = TransferItems(serverGameManager, inventory, iie.ExternalInventoryEntity.GetEntityOnServer(), item, amountToTransfer);
                         amountToTransfer -= transferred;
