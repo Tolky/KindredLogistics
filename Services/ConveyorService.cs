@@ -28,7 +28,7 @@ namespace KindredLogistics.Services
         readonly Dictionary<PrefabGUID, int> _availableInStashes = new(64);
         readonly Dictionary<int, int> _recipeStationCount = new(16);
         readonly Dictionary<int, int> _recipeStationsRemaining = new(16);
-        readonly Dictionary<PrefabGUID, int> _ingredientHas = new(8);
+        readonly Dictionary<PrefabGUID, int> _availableIngredients = new(8);
         readonly List<(int group, Entity station, Entity inputInv, float matchFloor, int recipeStart, int recipeCount, int invStart, int invCount)> _collectedStations = new(16);
         readonly List<int> _activeRecipeHashes = new(64);
         readonly List<(PrefabGUID itemType, int amount)> _inventorySlots = new(512);
@@ -299,6 +299,8 @@ namespace KindredLogistics.Services
             // Only scan stash inventories if there are multi-ingredient recipes on this territory
             _availableInStashes.Clear();
             _recipeStationsRemaining.Clear();
+            var dplRetain = Core.PlayerSettings.IsDontPullLastEnabled(platformID) ? 1 : 0;
+            var itemHashLookupMap = Core.PrefabCollectionSystem._PrefabLookupMap;
             if (hasMultiIngredient)
             {
                 foreach (var overflowStash in Core.Stash.GetAllOverflowStashes(territoryId))
@@ -321,17 +323,39 @@ namespace KindredLogistics.Services
                 foreach (var (_, sendingStash) in Core.Stash.GetAllSendingStashes(territoryId))
                 {
                     if (!serverGameManager.TryGetBuffer<AttachedBuffer>(sendingStash, out var buf)) continue;
+                    var reserveTemplateId = Core.Stash.GetReserveTemplateId(sendingStash);
+
                     foreach (var att in buf)
                     {
                         if (!att.Entity.Has<PrefabGUID>()) continue;
                         if (!att.Entity.Read<PrefabGUID>().Equals(StashService.ExternalInventoryPrefab)) continue;
+
+                        // Aggregate per-item totals in this inventory
+                        _availableIngredients.Clear();
                         foreach (var slot in att.Entity.ReadBuffer<InventoryBuffer>())
                         {
                             if (slot.ItemType.GuidHash != 0 && slot.Amount > 0)
                             {
-                                _availableInStashes.TryGetValue(slot.ItemType, out var cur);
-                                _availableInStashes[slot.ItemType] = cur + slot.Amount;
+                                _availableIngredients.TryGetValue(slot.ItemType, out var cur);
+                                _availableIngredients[slot.ItemType] = cur + slot.Amount;
                             }
+                        }
+
+                        // Add to global available, deducting DPL retain and K reserve
+                        foreach (var (itemType, total) in _availableIngredients)
+                        {
+                            var effective = total - dplRetain;
+
+                            if (reserveTemplateId >= 0 && itemHashLookupMap.TryGetValue(itemType, out var prefab))
+                            {
+                                var reserveAmount = Core.Stash.GetReserveAmount(sendingStash, prefab.Read<ItemData>().MaxAmount);
+                                if (reserveAmount > 0)
+                                    effective -= reserveAmount;
+                            }
+
+                            if (effective <= 0) continue;
+                            _availableInStashes.TryGetValue(itemType, out var globalCur);
+                            _availableInStashes[itemType] = globalCur + effective;
                         }
                     }
                 }
@@ -348,12 +372,12 @@ namespace KindredLogistics.Services
                 var (group, station, inputInventoryEntity, matchFloorReduction, recipeStart, recipeCount, invStart, invCount) = _collectedStations[si];
 
                 // Build ingredient map ONCE per station from cached inventory (pure managed)
-                _ingredientHas.Clear();
+                _availableIngredients.Clear();
                 for (int ii = invStart; ii < invStart + invCount; ii++)
                 {
                     var (itemType, amount) = _inventorySlots[ii];
-                    _ingredientHas.TryGetValue(itemType, out var cur);
-                    _ingredientHas[itemType] = cur + amount;
+                    _availableIngredients.TryGetValue(itemType, out var cur);
+                    _availableIngredients[itemType] = cur + amount;
                 }
 
                 for (int rci = 0; rci < recipeCount; rci++)
@@ -376,7 +400,7 @@ namespace KindredLogistics.Services
                         {
                             var perCraft = Mathf.RoundToInt(requirements[ri].amount * matchFloorReduction);
                             if (perCraft <= 0) continue;
-                            _ingredientHas.TryGetValue(requirements[ri].guid, out var has);
+                            _availableIngredients.TryGetValue(requirements[ri].guid, out var has);
                             _availableInStashes.TryGetValue(requirements[ri].guid, out var remaining);
                             var crafts = (has + remaining) / perCraft;
                             if (crafts < maxCrafts) maxCrafts = crafts;
@@ -393,7 +417,7 @@ namespace KindredLogistics.Services
                         {
                             var perCraft = Mathf.RoundToInt(requirements[ri].amount * matchFloorReduction);
                             if (perCraft <= 0) continue;
-                            _ingredientHas.TryGetValue(requirements[ri].guid, out var has);
+                            _availableIngredients.TryGetValue(requirements[ri].guid, out var has);
                             var pull = System.Math.Max(0, maxCrafts * perCraft - has);
                             if (pull > 0)
                             {
@@ -412,8 +436,8 @@ namespace KindredLogistics.Services
                     {
                         var singleCraftAmount = Mathf.RoundToInt(requirements[ri].amount * matchFloorReduction);
 
-                        // All recipes use _ingredientHas (built once per station above)
-                        _ingredientHas.TryGetValue(requirements[ri].guid, out var has);
+                        // All recipes use _availableIngredients (built once per station above)
+                        _availableIngredients.TryGetValue(requirements[ri].guid, out var has);
 
                         var amountWanted = maxCrafts * singleCraftAmount - has;
 
@@ -448,7 +472,6 @@ namespace KindredLogistics.Services
 
             // Determine what is desired by each receiving stash
             _alreadyAdded.Clear();
-            var itemHashLookupMap = Core.PrefabCollectionSystem._PrefabLookupMap;
             foreach (var (group, stash) in Core.Stash.GetAllReceivingStashes(territoryId))
             {
                 if (!serverGameManager.TryGetBuffer<AttachedBuffer>(stash, out var buffer))
@@ -532,7 +555,6 @@ namespace KindredLogistics.Services
             }
 
             // Next distribute from all the send stashes
-            var dplRetain = Core.PlayerSettings.IsDontPullLastEnabled(platformID) ? 1 : 0;
             foreach (var (group, sendingStash) in Core.Stash.GetAllSendingStashes(territoryId))
             {
                 if (!Core.EntityManager.Exists(sendingStash)) continue;
