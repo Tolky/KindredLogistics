@@ -34,6 +34,9 @@ namespace KindredLogistics.Services
         readonly List<(PrefabGUID itemType, int amount)> _inventorySlots = new(512);
         // Permanent cache: recipe requirements never change at runtime
         readonly Dictionary<int, (PrefabGUID guid, int amount)[]> _cachedRecipeReqs = new(64);
+        // Deduplication for multi-R-group stations: same station + recipe counted/processed only once
+        readonly HashSet<(Entity station, int recipeHash)> _seenStationRecipes = new(32);
+        readonly Dictionary<(Entity station, int recipeHash), int> _computedMaxCrafts = new(32);
         readonly Dictionary<PrefabGUID, List<(Entity receiver, int amount)>> _unitSpawnerNeeds = new(8);
         readonly Dictionary<PrefabGUID, List<(Entity receiver, int amount)>> _brazierNeeds = new(8);
         static readonly List<Entity> _emptyOverflowList = new();
@@ -245,6 +248,8 @@ namespace KindredLogistics.Services
 
             // Pre-scan: only read dynamic data (RecipesBuffer + InventoryBuffer) per station
             _recipeStationCount.Clear();
+            _seenStationRecipes.Clear();
+            _computedMaxCrafts.Clear();
             _collectedStations.Clear();
             _activeRecipeHashes.Clear();
             _inventorySlots.Clear();
@@ -276,7 +281,7 @@ namespace KindredLogistics.Services
                             cachedReqs[ri] = (reqs[ri].Guid, reqs[ri].Amount);
                         _cachedRecipeReqs[key] = cachedReqs;
                     }
-                    if (cachedReqs.Length >= 2)
+                    if (cachedReqs.Length >= 2 && _seenStationRecipes.Add((st, key)))
                     {
                         _recipeStationCount.TryGetValue(key, out var c);
                         _recipeStationCount[key] = c + 1;
@@ -391,45 +396,57 @@ namespace KindredLogistics.Services
                     int maxCrafts = 50; // default buffer for single-ingredient recipes
                     if (reqCount >= 2)
                     {
-                        _recipeStationsRemaining.TryGetValue(recipeHash, out var stationsRemaining);
-                        if (stationsRemaining < 1) stationsRemaining = 1;
-
-                        // Uncapped maxCrafts: machine contents + remaining stash ingredients
-                        maxCrafts = int.MaxValue;
-                        for (int ri = 0; ri < reqCount; ri++)
+                        // Multi-R-group dedup: compute maxCrafts and deduct pool only once per unique station+recipe
+                        var stationRecipeKey = (station, recipeHash);
+                        if (_computedMaxCrafts.TryGetValue(stationRecipeKey, out var cachedMax))
                         {
-                            var perCraft = Mathf.RoundToInt(requirements[ri].amount * matchFloorReduction);
-                            if (perCraft <= 0) continue;
-                            _availableIngredients.TryGetValue(requirements[ri].guid, out var has);
-                            _availableInStashes.TryGetValue(requirements[ri].guid, out var remaining);
-                            var crafts = (has + remaining) / perCraft;
-                            if (crafts < maxCrafts) maxCrafts = crafts;
+                            // Already computed for another group — reuse cached maxCrafts, skip pool deduction
+                            maxCrafts = cachedMax;
+                            if (maxCrafts <= 0) continue;
                         }
-                        if (maxCrafts == int.MaxValue) maxCrafts = 0;
-
-                        // Fair cap: each station gets at most ceil(uncapped / stationsRemaining)
-                        var fairCap = (maxCrafts + stationsRemaining - 1) / stationsRemaining;
-                        maxCrafts = fairCap;
-                        if (maxCrafts > 50) maxCrafts = 50;
-
-                        // Deduct from per-ingredient remaining pool
-                        for (int ri = 0; ri < reqCount; ri++)
+                        else
                         {
-                            var perCraft = Mathf.RoundToInt(requirements[ri].amount * matchFloorReduction);
-                            if (perCraft <= 0) continue;
-                            _availableIngredients.TryGetValue(requirements[ri].guid, out var has);
-                            var pull = System.Math.Max(0, maxCrafts * perCraft - has);
-                            if (pull > 0)
+                            _recipeStationsRemaining.TryGetValue(recipeHash, out var stationsRemaining);
+                            if (stationsRemaining < 1) stationsRemaining = 1;
+
+                            // Uncapped maxCrafts: machine contents + remaining stash ingredients
+                            maxCrafts = int.MaxValue;
+                            for (int ri = 0; ri < reqCount; ri++)
                             {
+                                var perCraft = Mathf.RoundToInt(requirements[ri].amount * matchFloorReduction);
+                                if (perCraft <= 0) continue;
+                                _availableIngredients.TryGetValue(requirements[ri].guid, out var has);
                                 _availableInStashes.TryGetValue(requirements[ri].guid, out var remaining);
-                                _availableInStashes[requirements[ri].guid] = System.Math.Max(0, remaining - pull);
+                                var crafts = (has + remaining) / perCraft;
+                                if (crafts < maxCrafts) maxCrafts = crafts;
                             }
+                            if (maxCrafts == int.MaxValue) maxCrafts = 0;
+
+                            // Fair cap: each station gets at most ceil(uncapped / stationsRemaining)
+                            var fairCap = (maxCrafts + stationsRemaining - 1) / stationsRemaining;
+                            maxCrafts = fairCap;
+                            if (maxCrafts > 50) maxCrafts = 50;
+
+                            // Deduct from per-ingredient remaining pool
+                            for (int ri = 0; ri < reqCount; ri++)
+                            {
+                                var perCraft = Mathf.RoundToInt(requirements[ri].amount * matchFloorReduction);
+                                if (perCraft <= 0) continue;
+                                _availableIngredients.TryGetValue(requirements[ri].guid, out var has);
+                                var pull = System.Math.Max(0, maxCrafts * perCraft - has);
+                                if (pull > 0)
+                                {
+                                    _availableInStashes.TryGetValue(requirements[ri].guid, out var remaining);
+                                    _availableInStashes[requirements[ri].guid] = System.Math.Max(0, remaining - pull);
+                                }
+                            }
+
+                            _recipeStationsRemaining[recipeHash] = stationsRemaining - 1;
+                            _computedMaxCrafts[stationRecipeKey] = maxCrafts;
+
+                            // If no crafts possible, skip this recipe
+                            if (maxCrafts <= 0) continue;
                         }
-
-                        _recipeStationsRemaining[recipeHash] = stationsRemaining - 1;
-
-                        // If no crafts possible, skip this recipe
-                        if (maxCrafts <= 0) continue;
                     }
 
                     for (int ri = 0; ri < reqCount; ri++)
